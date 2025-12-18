@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+
+	<PropertyGroup>
+		<TargetFramework>net462</TargetFramework>
+		<RootNamespace>FriendsAchievementFeed</RootNamespace>
+		<AssemblyName>FriendsAchievementFeed</AssemblyName>
+		<LangVersion>latest</LangVersion>
+		<UseWPF>true</UseWPF>
+		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+		<OutputPath>bin\$(Configuration)\</OutputPath>
+		<EnableDefaultItems>true</EnableDefaultItems>
+	</PropertyGroup>
+
+	<!-- <ItemGroup> -->
+		<!-- <Compile Include="Common\*.cs" /> -->
+		<!-- <Compile Include="Common\SteamKitModels\*.cs" /> -->
+	<!-- </ItemGroup> -->
+
+	<ItemGroup>
+		<PackageReference Include="PlayniteSDK" Version="6.14.0" />
+		<PackageReference Include="LiveCharts.Wpf" Version="0.9.7" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Reference Include="PresentationFramework" />
+		<Reference Include="PresentationCore" />
+		<Reference Include="WindowsBase" />
+		<Reference Include="System.Xaml" />
+		<Reference Include="System.Net.Http" />
+		<Reference Include="System" />
+		<Reference Include="System.Core" />
+		<Reference Include="mscorlib" />
+	</ItemGroup>
+
+
+	<ItemGroup>
+		<None Include="extension.yaml">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+
+		<None Include="icon.png">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+
+		<None Include="Localization\en_US.xaml">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+	<PropertyGroup>
+		<PostBuildEvent>xcopy "$(ProjectDir)Localization\*.xaml" "$(TargetDir)\Localization" /Y /I /E</PostBuildEvent>
+	</PropertyGroup>
+</Project>
