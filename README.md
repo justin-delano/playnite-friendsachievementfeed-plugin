@@ -16,7 +16,7 @@ Small [Playnite ](https://playnite.link/)extension that shows a chronological fe
   - Full rebuild: scans friends and owned games and reconstructs the entire cache.
   - Incremental rebuild: quick checks for recent changes and merges new entries into the existing cache.
 - Background updates: optional periodic incremental updates run on a configurable schedule.
-- SuccessStory integration: imports local SuccessStory files (if available) to include achievements from non-Steam sources.
+- SuccessStory integration: imports local SuccessStory files (if available) to include metadata not available from the Steam API.
 
 ## Types of feeds
 
