@@ -1,4 +1,4 @@
-# playnite-friendsachievementsfeed-plugin
+# playnite-friendsachievementfeed-plugin
 
 Small [Playnite ](https://playnite.link/)extension that shows a chronological feed of your friends' achievement activity.
 
