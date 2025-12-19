@@ -853,21 +853,19 @@ namespace FriendsAchievementFeed.Services
 
                 var candidateAppIds = new List<int>();
 
-                if (mode == CacheRebuildMode.Full)
-                    var friendOwned = GetOwnedGameIdsCached(friend.SteamId);
-                    if (!_settings.SearchAllMyGames && (friendOwned == null || friendOwned.Count == 0))
-                    {
-                        // If not searching all my games, skip this friend when they have no owned games
-                        break;
-                    }
+                // Fetch friend's owned games once (may be empty for private profiles)
+                var friendOwnedGames = GetOwnedGameIdsCached(friend.SteamId);
+                if (!_settings.SearchAllMyGames && (friendOwnedGames == null || friendOwnedGames.Count == 0))
+                {
+                    _logger.Debug($"Skipping {friend.PersonaName} ({friend.SteamId}) - no owned games or private profile (ownedCount=0)");
+                    return newEntries;
+                }
 
-                    if (!_settings.SearchAllMyGames)
+                if (mode == CacheRebuildMode.Full)
+                {
+                    if (_settings.SearchAllMyGames)
                     {
-                        if (!friendOwned.Contains(appId))
-                        {
-                            continue;
-                        }
-                    }
+                        // Consider all games you own (that are in your Playnite Steam list)
                         foreach (var appId in steamGamesDict.Keys)
                         {
                             if (yourOwnedGames.Contains(appId) && steamGamesDict.ContainsKey(appId))
@@ -879,7 +877,7 @@ namespace FriendsAchievementFeed.Services
                     else
                     {
                         // All mutual games: friend owns it, you own it, and it's in your Playnite Steam list
-                        foreach (var appId in friendOwned)
+                        foreach (var appId in friendOwnedGames)
                         {
                             if (yourOwnedGames.Contains(appId) && steamGamesDict.ContainsKey(appId))
                             {
@@ -900,7 +898,7 @@ namespace FriendsAchievementFeed.Services
                     {
                         var appId = kv.Key;
                         // If configured to search all my games, don't require friendOwnedGames.Contains
-                        if ((_settings.SearchAllMyGames || friendOwnedGames.Contains(appId)) &&
+                        if ((_settings.SearchAllMyGames || (friendOwnedGames != null && friendOwnedGames.Contains(appId))) &&
                             yourOwnedGames.Contains(appId) &&
                             steamGamesDict.ContainsKey(appId))
                         {
