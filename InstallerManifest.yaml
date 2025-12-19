@@ -3,11 +3,7 @@ Packages:
   - Version: 1.0
     RequiredApiVersion: 6.14.0
     ReleaseDate: 2025-12-18
-<<<<<<< HEAD
     PackageUrl: https://github.com/justin-delano/playnite-friendsachievementfeed-plugin/releases/download/1.0/playnite-friendsachievementsfeed-plugin_1_0.pext
-=======
-    PackageUrl: https://github.com/justin-delano/playnite-friendsachievementfeed-plugin/releases/download/1.1/FriendsAchievementFeed_1_0.pext
->>>>>>> 6ffcd0f1a48cee46f0ab0326f6992da98f1b6dfb
     Changelog:
       - First release
   - Version: 1.1
@@ -15,8 +11,4 @@ Packages:
     ReleaseDate: 2025-12-19
     PackageUrl: https://github.com/justin-delano/playnite-friendsachievementfeed-plugin/releases/download/1.1/FriendsAchievementFeed_1_1.pext
     Changelog:
-<<<<<<< HEAD
-      - Release 1.1 - Add setting to search all owned games and UI/README updates
-=======
       - Release 1.1: Add setting to search all owned games and UI/README updates
->>>>>>> 6ffcd0f1a48cee46f0ab0326f6992da98f1b6dfb
