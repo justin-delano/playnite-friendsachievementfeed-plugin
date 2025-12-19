@@ -34,6 +34,8 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_HideLocked">Hide My Locked Achievements</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_ShowMyUnlockTime">Show My Unlock Time</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_GameFeedTabHeight">Game Feed Tab Height (px)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames">Search all my owned games (not only mutual games)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames_Desc">When enabled, the plugin will search for achievements across all games you own. If disabled, only games both you and your friend own (mutual games) will be scanned.</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick">Quick ⚡</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick_Tooltip">Quick Incremental Rebuild</sys:String>

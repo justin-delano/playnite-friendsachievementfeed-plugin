@@ -660,8 +660,9 @@ namespace FriendsAchievementFeed.Services
                 cancel.ThrowIfCancellationRequested();
 
                 var friendOwned = GetOwnedGameIdsCached(friend.SteamId);
-                if (friendOwned == null || friendOwned.Count == 0)
+                if (!_settings.SearchAllMyGames && (friendOwned == null || friendOwned.Count == 0))
                 {
+                    // If not searching all my games, skip friends with no owned games
                     continue;
                 }
 
@@ -846,12 +847,6 @@ namespace FriendsAchievementFeed.Services
             {
                 cancel.ThrowIfCancellationRequested();
 
-                var friendOwnedGames = GetOwnedGameIdsCached(friend.SteamId);
-                if (friendOwnedGames == null || friendOwnedGames.Count == 0)
-                {
-                    _logger.Debug($"Skipping {friend.PersonaName} ({friend.SteamId}) - no owned games or private profile (ownedCount=0)");
-                    return newEntries;
-                }
 
                 friendAppMaxUnlock.TryGetValue(friend.SteamId, out var appMap);
                 var friendHasCached = appMap != null && appMap.Count > 0;
@@ -859,13 +854,37 @@ namespace FriendsAchievementFeed.Services
                 var candidateAppIds = new List<int>();
 
                 if (mode == CacheRebuildMode.Full)
-                {
-                    // All mutual games: friend owns it, you own it, and it's in your Playnite Steam list
-                    foreach (var appId in friendOwnedGames)
+                    var friendOwned = GetOwnedGameIdsCached(friend.SteamId);
+                    if (!_settings.SearchAllMyGames && (friendOwned == null || friendOwned.Count == 0))
                     {
-                        if (yourOwnedGames.Contains(appId) && steamGamesDict.ContainsKey(appId))
+                        // If not searching all my games, skip this friend when they have no owned games
+                        break;
+                    }
+
+                    if (!_settings.SearchAllMyGames)
+                    {
+                        if (!friendOwned.Contains(appId))
                         {
-                            candidateAppIds.Add(appId);
+                            continue;
+                        }
+                    }
+                        foreach (var appId in steamGamesDict.Keys)
+                        {
+                            if (yourOwnedGames.Contains(appId) && steamGamesDict.ContainsKey(appId))
+                            {
+                                candidateAppIds.Add(appId);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // All mutual games: friend owns it, you own it, and it's in your Playnite Steam list
+                        foreach (var appId in friendOwned)
+                        {
+                            if (yourOwnedGames.Contains(appId) && steamGamesDict.ContainsKey(appId))
+                            {
+                                candidateAppIds.Add(appId);
+                            }
                         }
                     }
                 }
@@ -880,7 +899,8 @@ namespace FriendsAchievementFeed.Services
                     foreach (var kv in appMap)
                     {
                         var appId = kv.Key;
-                        if (friendOwnedGames.Contains(appId) &&
+                        // If configured to search all my games, don't require friendOwnedGames.Contains
+                        if ((_settings.SearchAllMyGames || friendOwnedGames.Contains(appId)) &&
                             yourOwnedGames.Contains(appId) &&
                             steamGamesDict.ContainsKey(appId))
                         {

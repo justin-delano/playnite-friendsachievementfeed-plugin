@@ -2,9 +2,9 @@ using System.Windows.Controls;
 
 namespace FriendsAchievementFeed.Views
 {
-    public partial class SettingsView : UserControl
+    public partial class SettingsControl : UserControl
     {
-        public SettingsView()
+        public SettingsControl()
         {
             InitializeComponent();
         }

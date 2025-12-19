@@ -28,6 +28,7 @@ namespace FriendsAchievementFeed.Models
         private int _gameFeedTabHeight = 1000;
         private bool _hideAchievementsLockedForYou = false;
         private bool _includeMyUnlockTime = false;
+        private bool _searchAllMyGames = false;
         private bool _hasGameFeedGroups;
         public string SteamApiKey
         {
@@ -149,6 +150,15 @@ namespace FriendsAchievementFeed.Models
         }
 
         /// <summary>
+        /// When true, searches for friend achievements across all games you own (not only mutual games).
+        /// </summary>
+        public bool SearchAllMyGames
+        {
+            get => _searchAllMyGames;
+            set => SetValue(ref _searchAllMyGames, value);
+        }
+
+        /// <summary>
         /// Runtime-only flag: does the currently selected game have any feed groups?
         /// Used by themes to hide/show the FusionX tab.
         /// </summary>
@@ -182,6 +192,7 @@ namespace FriendsAchievementFeed.Models
                 GameFeedTabHeight = saved.GameFeedTabHeight;
                 HideAchievementsLockedForYou = saved.HideAchievementsLockedForYou;
                 IncludeMyUnlockTime = saved.IncludeMyUnlockTime;
+                SearchAllMyGames = saved.SearchAllMyGames;
                 EnableNotifications = saved.EnableNotifications;
                 NotifyPeriodicUpdates = saved.NotifyPeriodicUpdates;
                 NotifyOnRebuild = saved.NotifyOnRebuild;
@@ -208,6 +219,7 @@ namespace FriendsAchievementFeed.Models
                 GameFeedTabHeight = _editingClone.GameFeedTabHeight;
                 HideAchievementsLockedForYou = _editingClone.HideAchievementsLockedForYou;
                 IncludeMyUnlockTime = _editingClone.IncludeMyUnlockTime;
+                SearchAllMyGames = _editingClone.SearchAllMyGames;
                 EnableNotifications = _editingClone.EnableNotifications;
                 NotifyPeriodicUpdates = _editingClone.NotifyPeriodicUpdates;
                 NotifyOnRebuild = _editingClone.NotifyOnRebuild;

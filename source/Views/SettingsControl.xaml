@@ -1,4 +1,4 @@
-<UserControl x:Class="FriendsAchievementFeed.Views.SettingsView"
+<UserControl x:Class="FriendsAchievementFeed.Views.SettingsControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -179,6 +179,16 @@
                                           IsChecked="{Binding NotifyOnRebuild}"
                                           VerticalAlignment="Center"
                                           Margin="0,2,0,0" />
+                                <CheckBox Content="{DynamicResource LOCFriendsAchFeed_Settings_SearchAllMyGames}"
+                                          IsChecked="{Binding SearchAllMyGames}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,8,0,0" />
+                                <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Settings_SearchAllMyGames_Desc}"
+                                           Foreground="{DynamicResource TextBrush}"
+                                           Opacity="0.8"
+                                           TextWrapping="Wrap"
+                                           Margin="18,4,0,0"
+                                           FontSize="12" />
                             </StackPanel>
                         </StackPanel>
 

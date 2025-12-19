@@ -74,14 +74,9 @@ namespace FriendsAchievementFeed
             return null;
         }
 
-        public override ISettings GetSettings(bool firstRunSettings)
+        public override UserControl GetSettingsView(bool firstRun)
         {
-            return _settings;
-        }
-
-        public override UserControl GetSettingsView(bool firstRunSettings)
-        {
-            return new SettingsView
+            return new SettingsControl
             {
                 DataContext = _settings
             };

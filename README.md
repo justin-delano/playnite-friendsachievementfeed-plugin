@@ -35,3 +35,7 @@ Small [Playnite ](https://playnite.link/)extension that shows a chronological fe
 
 - No feed items: confirm Steam API key and user ID are configured in plugin settings and that SuccessStory files (if used) are accessible.
 - Rebuild failures: check plugin logs (Playnite logs) for detailed errors and try a manual full rebuild.
+ 
+## Privacy / visibility
+
+- Only public Steam friends will return achievement data. Friends with private profiles or restricted game/achievement visibility may not show any activity in the feed.
