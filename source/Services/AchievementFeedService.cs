@@ -81,6 +81,7 @@ namespace FriendsAchievementFeed.Services
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly ILogger _logger;
         private readonly CacheService _cacheService;
+        private readonly FriendsAchievementFeedPlugin _plugin;
         public event EventHandler CacheChanged
         {
             add    => _cacheService.CacheChanged += value;
@@ -98,12 +99,13 @@ namespace FriendsAchievementFeed.Services
 
         public CacheService Cache => _cacheService;
 
-        public AchievementFeedService(IPlayniteAPI api, FriendsAchievementFeedSettings settings, ILogger logger)
+        public AchievementFeedService(IPlayniteAPI api, FriendsAchievementFeedSettings settings, ILogger logger, FriendsAchievementFeedPlugin plugin)
         {
             _api = api;
             _settings = settings;
             _logger = logger;
-            _cacheService = new CacheService(api, logger);
+            _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
+            _cacheService = new CacheService(api, logger, _plugin);
         }
 
         /// <summary>
@@ -712,9 +714,9 @@ namespace FriendsAchievementFeed.Services
                 cancel.ThrowIfCancellationRequested();
 
                 var friendOwned = GetOwnedGameIdsCached(friend.SteamId);
-                if (!_settings.SearchAllMyGames && (friendOwned == null || friendOwned.Count == 0))
+                // Always skip friends with no owned games or private profiles
+                if (friendOwned == null || friendOwned.Count == 0)
                 {
-                    // If not searching all my games, skip friends with no owned games
                     continue;
                 }
 
@@ -725,7 +727,9 @@ namespace FriendsAchievementFeed.Services
                     var appId = kv.Key;
                     var game = kv.Value;
 
-                    if (!friendOwned.Contains(appId))
+                    // If SearchAllMyGames is enabled, don't require the friend to own the app;
+                    // otherwise only consider apps the friend owns.
+                    if (!_settings.SearchAllMyGames && !friendOwned.Contains(appId))
                     {
                         continue;
                     }
@@ -907,7 +911,8 @@ namespace FriendsAchievementFeed.Services
 
                 // Fetch friend's owned games once (may be empty for private profiles)
                 var friendOwnedGames = GetOwnedGameIdsCached(friend.SteamId);
-                if (!_settings.SearchAllMyGames && (friendOwnedGames == null || friendOwnedGames.Count == 0))
+                // Always skip friends with no owned games or private profiles
+                if (friendOwnedGames == null || friendOwnedGames.Count == 0)
                 {
                     _logger.Debug($"Skipping {friend.PersonaName} ({friend.SteamId}) - no owned games or private profile (ownedCount=0)");
                     return newEntries;
@@ -949,8 +954,7 @@ namespace FriendsAchievementFeed.Services
                     foreach (var kv in appMap)
                     {
                         var appId = kv.Key;
-                        // If configured to search all my games, don't require friendOwnedGames.Contains
-                        if ((_settings.SearchAllMyGames || (friendOwnedGames != null && friendOwnedGames.Contains(appId))) &&
+                        if ((friendOwnedGames != null && friendOwnedGames.Contains(appId)) &&
                             yourOwnedGames.Contains(appId) &&
                             steamGamesDict.ContainsKey(appId))
                         {
@@ -1250,31 +1254,11 @@ namespace FriendsAchievementFeed.Services
 
             // Merge or replace cache without re-filtering by time.
             // Per-friend time filtering has already been applied above.
-            if (lastUpdatedUtc.HasValue)
+            var cacheFileExists = _cacheService.CacheFileExists();
+
+            if (!cacheFileExists)
             {
-                    if (allEntries.Any())
-                    {
-                        _cacheService.MergeUpdateCache(allEntries);
-                        progress?.Report(new ProgressReport
-                        {
-                            Message = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_CacheMerged"), allEntries.Count),
-                            CurrentStep = totalSteps,
-                            TotalSteps = totalSteps
-                        });
-                    }
-                    else
-                    {
-                        progress?.Report(new ProgressReport
-                        {
-                            Message = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_NoNewSinceLastUpdate"),
-                            CurrentStep = totalSteps,
-                            TotalSteps = totalSteps
-                        });
-                    }
-            }
-            else
-            {
-                // No existing cache - perform a full replace
+                // No cache file on disk -> create/replace the cache
                 _cacheService.UpdateCache(allEntries);
                 progress?.Report(new ProgressReport
                 {
@@ -1282,6 +1266,29 @@ namespace FriendsAchievementFeed.Services
                     CurrentStep = totalSteps,
                     TotalSteps = totalSteps
                 });
+            }
+            else
+            {
+                // Existing cache file -> merge updates when there are new entries
+                if (allEntries.Any())
+                {
+                    _cacheService.MergeUpdateCache(allEntries);
+                    progress?.Report(new ProgressReport
+                    {
+                        Message = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_CacheMerged"), allEntries.Count),
+                        CurrentStep = totalSteps,
+                        TotalSteps = totalSteps
+                    });
+                }
+                else
+                {
+                    progress?.Report(new ProgressReport
+                    {
+                        Message = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_NoNewSinceLastUpdate"),
+                        CurrentStep = totalSteps,
+                        TotalSteps = totalSteps
+                    });
+                }
             }
         }
 

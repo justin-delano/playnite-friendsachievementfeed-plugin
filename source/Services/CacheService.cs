@@ -6,6 +6,7 @@ using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Threading.Tasks;
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed;
 using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Services
@@ -29,6 +30,7 @@ namespace FriendsAchievementFeed.Services
         private readonly IPlayniteAPI _api;
         private readonly ILogger _logger;
         private readonly string _cacheFilePath;
+        private readonly FriendsAchievementFeedPlugin _plugin;
         private CachedAchievementData _cache;
         private readonly object _cacheLock = new object();
 
@@ -46,12 +48,13 @@ namespace FriendsAchievementFeed.Services
             }
         }
 
-        public CacheService(IPlayniteAPI api, ILogger logger)
+        public CacheService(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin)
         {
             _api = api;
             _logger = logger;
+            _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
 
-            var cacheDir = Path.Combine(_api.Paths.ExtensionsDataPath, "FriendsAchievementFeed");
+            var cacheDir = _plugin.GetPluginUserDataPath();
             if (!Directory.Exists(cacheDir))
             {
                 Directory.CreateDirectory(cacheDir);
@@ -65,7 +68,7 @@ namespace FriendsAchievementFeed.Services
             lock (_cacheLock)
             {
                 // If the cache file does not exist on disk, invalidate any in-memory cache
-                if (!File.Exists(_cacheFilePath))
+                if (!CacheFileExists())
                 {
                     _logger.Debug(ResourceProvider.GetString("Debug_NoCacheFile"));
                     _cache = null;
@@ -86,7 +89,7 @@ namespace FriendsAchievementFeed.Services
         {
             lock (_cacheLock)
             {
-                if (_cache == null || !File.Exists(_cacheFilePath))
+                if (_cache == null || !CacheFileExists())
                 {
                     LoadCache();
                 }
@@ -95,11 +98,26 @@ namespace FriendsAchievementFeed.Services
             }
         }
 
+        /// <summary>
+        /// Returns true if the cache file exists on disk.
+        /// </summary>
+        public bool CacheFileExists()
+        {
+            try
+            {
+                return File.Exists(_cacheFilePath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public List<FeedEntry> GetCachedEntries()
         {
             lock (_cacheLock)
             {
-                if (_cache == null || !File.Exists(_cacheFilePath))
+                if (_cache == null || !CacheFileExists())
                 {
                     LoadCache();
                 }
@@ -168,7 +186,7 @@ namespace FriendsAchievementFeed.Services
         {
             try
             {
-                if (File.Exists(_cacheFilePath))
+                if (CacheFileExists())
                 {
                     using (var stream = File.OpenRead(_cacheFilePath))
                     {
@@ -214,7 +232,7 @@ namespace FriendsAchievementFeed.Services
                 _cache = null;
                 try
                 {
-                    if (File.Exists(_cacheFilePath))
+                    if (CacheFileExists())
                     {
                         File.Delete(_cacheFilePath);
                         _logger.Debug(ResourceProvider.GetString("Debug_CacheDeleted"));

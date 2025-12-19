@@ -39,7 +39,7 @@ namespace FriendsAchievementFeed
                 HasSettings = true
             };
 
-            _feedService = new AchievementFeedService(api, _settings, Logger);
+            _feedService = new AchievementFeedService(api, _settings, Logger, this);
 
             // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
@@ -301,7 +301,14 @@ namespace FriendsAchievementFeed
             // Subscribe to library changes to trigger targeted cache updates for changed games
             try
             {
-                PlayniteApi.Database.Games.CollectionChanged += Database_Games_CollectionChanged;
+                if (PlayniteApi.Database.Games is System.Collections.Specialized.INotifyCollectionChanged incc)
+                {
+                    incc.CollectionChanged += Database_Games_CollectionChanged;
+                }
+                else
+                {
+                    Logger.Debug("Database.Games does not implement INotifyCollectionChanged; skipping subscription.");
+                }
             }
             catch (Exception ex)
             {
@@ -324,7 +331,10 @@ namespace FriendsAchievementFeed
             }
             try
             {
-                PlayniteApi.Database.Games.CollectionChanged -= Database_Games_CollectionChanged;
+                if (PlayniteApi.Database.Games is System.Collections.Specialized.INotifyCollectionChanged incc)
+                {
+                    incc.CollectionChanged -= Database_Games_CollectionChanged;
+                }
             }
             catch
             {

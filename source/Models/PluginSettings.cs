@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using Playnite.SDK.Data;
+using System.IO;
 using Common;
 
 namespace FriendsAchievementFeed.Models
