@@ -16,20 +16,18 @@ namespace FriendsAchievementFeed
 {
     public class FriendsAchievementFeedPlugin : GenericPlugin
     {
-        private static readonly ILogger Logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
+                private static readonly ILogger Logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
 
         public const string SourceName = "FriendsAchievementFeed";
 
-        private FriendsAchievementFeedSettings _settings;
-        private AchievementFeedService _feedService;
+        private readonly FriendsAchievementFeedSettings _settings;
+        private readonly AchievementFeedService _feedService;
         private System.Threading.CancellationTokenSource _backgroundCts;
 
-        // Unique plugin GUID (does not need to match extension.yaml Id string)
         public override Guid Id { get; } =
             Guid.Parse("10f90193-72aa-4cdb-b16d-3e6b1f0feb17");
 
         public FriendsAchievementFeedSettings Settings => _settings;
-
         public AchievementFeedService FeedService => _feedService;
 
         public FriendsAchievementFeedPlugin(IPlayniteAPI api) : base(api)
@@ -41,11 +39,9 @@ namespace FriendsAchievementFeed
                 HasSettings = true
             };
 
-            // Single shared instance for the whole extension
-            _feedService = new AchievementFeedService(api, Settings, Logger);
+            _feedService = new AchievementFeedService(api, _settings, Logger);
 
-            // === Theme integration ===
-
+            // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
             {
                 SourceName = SourceName,
@@ -59,27 +55,14 @@ namespace FriendsAchievementFeed
             });
         }
 
-        // === Views ===
-
-        public override Control GetGameViewControl(GetGameViewControlArgs args)
+        public override ISettings GetSettings(bool firstRunSettings)
         {
-            if (args.Name == "GameFeedTab")
-            {
-                // Per-game embedded view in the details panel
-                var control = new GameFeedControl(PlayniteApi, _settings, Logger, _feedService);
-                control.ApplyGameViewLayout();
-                return control;
-            }
-
-            return null;
+            return _settings;
         }
 
-        public override UserControl GetSettingsView(bool firstRun)
+        public override UserControl GetSettingsView(bool firstRunView)
         {
-            return new SettingsControl
-            {
-                DataContext = _settings
-            };
+            return new SettingsControl();
         }
 
         // === Menus ===
