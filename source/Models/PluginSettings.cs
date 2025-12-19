@@ -19,7 +19,7 @@ namespace FriendsAchievementFeed.Models
         private int _maxFeedItems = 100;
         private int _rebuildParallelism = 4;
         private bool _enablePeriodicUpdates = true;
-        private int _periodicUpdateHours = 4;
+        private int _periodicUpdateHours = 6;
         private bool _enableNotifications = true;
         private bool _notifyPeriodicUpdates = true;
         private bool _notifyOnRebuild = true;
