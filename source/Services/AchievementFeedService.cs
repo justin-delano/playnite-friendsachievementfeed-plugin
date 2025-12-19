@@ -106,6 +106,58 @@ namespace FriendsAchievementFeed.Services
             _cacheService = new CacheService(api, logger);
         }
 
+        /// <summary>
+        /// Update cache entries for the specified appIds by performing a live fetch
+        /// for those games and merging results into the existing cache.
+        /// This is intended for targeted updates when a single game in the library changes.
+        /// </summary>
+        public async Task UpdateCacheForAppIdsAsync(IEnumerable<int> appIds)
+        {
+            if (!IsSteamConfigured())
+            {
+                return;
+            }
+
+            if (appIds == null)
+            {
+                return;
+            }
+
+            // Avoid clobbering an active full/incremental rebuild
+            if (IsRebuilding)
+            {
+                _logger?.Debug("Skipping targeted cache update because a rebuild is already running.");
+                return;
+            }
+
+            try
+            {
+                var yourOwnedGames = GetOwnedGameIdsCached(_settings.SteamUserId);
+                var steamGamesDict = BuildOwnedSteamGamesDict(yourOwnedGames);
+
+                var games = appIds
+                    .Where(id => steamGamesDict.ContainsKey(id))
+                    .Select(id => steamGamesDict[id])
+                    .ToList();
+
+                if (games.Count == 0)
+                {
+                    return;
+                }
+
+                var liveEntries = await BuildLiveFeedForGamesAsync(games, CancellationToken.None).ConfigureAwait(false);
+
+                if (liveEntries != null && liveEntries.Any())
+                {
+                    _cacheService.MergeUpdateCache(liveEntries);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "Error while performing targeted cache update for appIds.");
+            }
+        }
+
         #region Basic helpers
 
         private bool IsSteamConfigured()

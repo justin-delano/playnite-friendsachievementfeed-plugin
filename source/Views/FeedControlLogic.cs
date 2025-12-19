@@ -426,7 +426,23 @@ namespace FriendsAchievementFeed.Views
 
                 ShowProgress = true;
 
-                await _feedService.StartManagedRebuildAsync(mode).ConfigureAwait(false);
+                // If there is no existing cache on disk, an incremental rebuild has nothing to anchor to.
+                // Upgrade incremental requests to a full rebuild so the cache file is regenerated.
+                var effectiveMode = mode;
+                if (mode == CacheRebuildMode.Incremental && !_feedService.IsCacheValid())
+                {
+                    effectiveMode = CacheRebuildMode.Full;
+                    try
+                    {
+                        StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_NoExistingCache_FullRebuild");
+                    }
+                    catch
+                    {
+                        // ignore localization issues
+                    }
+                }
+
+                await _feedService.StartManagedRebuildAsync(effectiveMode).ConfigureAwait(false);
 
                 // Show a non-modal toast for rebuild completion/failure (if enabled)
                 if (_settings != null && _settings.EnableNotifications && _settings.NotifyOnRebuild)

@@ -297,6 +297,16 @@ namespace FriendsAchievementFeed
                     Logger.Error(ex, "Failed to start periodic cache update loop");
                 }
             }, token);
+
+            // Subscribe to library changes to trigger targeted cache updates for changed games
+            try
+            {
+                PlayniteApi.Database.Games.CollectionChanged += Database_Games_CollectionChanged;
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug(ex, "Failed to subscribe to database collection changed events.");
+            }
         }
 
         public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
@@ -311,6 +321,69 @@ namespace FriendsAchievementFeed
             catch
             {
                 // ignore shutdown errors
+            }
+            try
+            {
+                PlayniteApi.Database.Games.CollectionChanged -= Database_Games_CollectionChanged;
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        private void Database_Games_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        {
+            try
+            {
+                var ids = new List<int>();
+
+                if (e.NewItems != null)
+                {
+                    foreach (var ni in e.NewItems)
+                    {
+                        if (ni is Game g && int.TryParse(g.GameId, out var appId) && appId != 0)
+                        {
+                            ids.Add(appId);
+                        }
+                    }
+                }
+
+                if (e.OldItems != null)
+                {
+                    foreach (var oi in e.OldItems)
+                    {
+                        if (oi is Game g && int.TryParse(g.GameId, out var appId) && appId != 0)
+                        {
+                            ids.Add(appId);
+                        }
+                    }
+                }
+
+                if (ids.Count == 0)
+                {
+                    return;
+                }
+
+                // Deduplicate
+                ids = ids.Distinct().ToList();
+
+                // Fire-and-forget targeted update
+                System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _feedService.UpdateCacheForAppIdsAsync(ids).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error(ex, "Error during targeted cache update after library change.");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug(ex, "Error handling library collection change.");
             }
         }
 

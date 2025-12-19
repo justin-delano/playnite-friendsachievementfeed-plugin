@@ -64,12 +64,20 @@ namespace FriendsAchievementFeed.Services
         {
             lock (_cacheLock)
             {
+                // If the cache file does not exist on disk, invalidate any in-memory cache
+                if (!File.Exists(_cacheFilePath))
+                {
+                    _logger.Debug(ResourceProvider.GetString("Debug_NoCacheFile"));
+                    _cache = null;
+                    return false;
+                }
+
                 if (_cache == null)
                 {
                     LoadCache();
                 }
 
-                // Cache is valid if it exists and has data
+                // Cache is valid if it exists in memory and has data
                 return _cache != null && _cache.Entries.Any();
             }
         }
@@ -78,10 +86,11 @@ namespace FriendsAchievementFeed.Services
         {
             lock (_cacheLock)
             {
-                if (_cache == null)
+                if (_cache == null || !File.Exists(_cacheFilePath))
                 {
                     LoadCache();
                 }
+
                 return _cache?.LastUpdated;
             }
         }
@@ -90,10 +99,11 @@ namespace FriendsAchievementFeed.Services
         {
             lock (_cacheLock)
             {
-                if (_cache == null)
+                if (_cache == null || !File.Exists(_cacheFilePath))
                 {
                     LoadCache();
                 }
+
                 return _cache?.Entries?
                     .OrderByDescending(e => e.UnlockTime)
                     .ToList() ?? new List<FeedEntry>();
