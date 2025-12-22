@@ -9,7 +9,8 @@ using System.Linq;
 using System.Windows.Media;
 using System.Windows.Input;
 using FriendsAchievementFeed.Models;
-
+using System.Globalization;
+using System.Windows.Data;
 namespace FriendsAchievementFeed.Views.Shared
 {
     public partial class FeedViewControl : PluginUserControl
@@ -281,6 +282,42 @@ namespace FriendsAchievementFeed.Views.Shared
             {
                 // ignore cleanup failures
             }
+        }
+    }
+
+    public class UtcToLocalConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            if (value is DateTime dt)
+            {
+                if (dt.Kind == DateTimeKind.Local)
+                {
+                    // Old cache entries that were already local
+                    return dt;
+                }
+
+                if (dt.Kind == DateTimeKind.Utc)
+                {
+                    return dt.ToLocalTime();
+                }
+
+                // Unspecified: in the new world we treat stored values as UTC
+                return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
+            }
+
+            return value;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            // Not used for display-only bindings; keep as-is or convert back to UTC if you ever need two-way
+            return value;
         }
     }
 }

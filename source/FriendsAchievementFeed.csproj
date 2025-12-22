@@ -17,8 +17,10 @@
 	<!-- </ItemGroup> -->
 
 	<ItemGroup>
+		<PackageReference Include="HtmlAgilityPack" Version="1.11.62" />
 		<PackageReference Include="PlayniteSDK" Version="6.14.0" />
 		<PackageReference Include="LiveCharts.Wpf" Version="0.9.7" />
+		<PackageReference Include="System.ValueTuple" Version="4.5.0" />
 	</ItemGroup>
 
 	<ItemGroup>

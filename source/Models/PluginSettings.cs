@@ -15,10 +15,10 @@ namespace FriendsAchievementFeed.Models
 
         private FriendsAchievementFeedSettings _editingClone;
 
-        private string _steamApiKey;
         private string _steamUserId;
-        private int _maxFeedItems = 100;
-        private int _rebuildParallelism = 4;
+        private string _steamApiKey = string.Empty;
+        private string _steamLanguage = "english";
+        private int _maxFeedItems = 100;        
         private bool _enablePeriodicUpdates = true;
         private int _periodicUpdateHours = 6;
         private bool _enableNotifications = true;
@@ -31,16 +31,31 @@ namespace FriendsAchievementFeed.Models
         private bool _includeMyUnlockTime = false;
         private bool _searchAllMyGames = false;
         private bool _hasGameFeedGroups;
-        public string SteamApiKey
-        {
-            get => _steamApiKey;
-            set => SetValue(ref _steamApiKey, value);
-        }
-
+        // Expose paths to cache locations instead of storing full feed entries
+        private string _exposedGlobalFeedPath = string.Empty;
+        private Dictionary<string, string> _exposedGameFeeds = new Dictionary<string, string>();
         public string SteamUserId
         {
             get => _steamUserId;
             set => SetValue(ref _steamUserId, value);
+        }
+
+        /// <summary>
+        /// Optional Steam Web API key used for owned games, friends and player summaries.
+        /// </summary>
+        public string SteamApiKey
+        {
+            get => _steamApiKey;
+            set => SetValue(ref _steamApiKey, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Preferred Steam language code for schema/achievement text (e.g. "english", "spanish").
+        /// </summary>
+        public string SteamLanguage
+        {
+            get => _steamLanguage;
+            set => SetValue(ref _steamLanguage, value);
         }
 
         public int MaxFeedItems
@@ -49,14 +64,7 @@ namespace FriendsAchievementFeed.Models
             set => SetValue(ref _maxFeedItems, value);
         }
 
-        /// <summary>
-        /// Degree of parallelism used when rebuilding the cache.
-        /// </summary>
-        public int RebuildParallelism
-        {
-            get => _rebuildParallelism;
-            set => SetValue(ref _rebuildParallelism, value);
-        }
+
 
         /// <summary>
         /// Size (pixels) of friend avatar images in the feed.
@@ -88,7 +96,7 @@ namespace FriendsAchievementFeed.Models
         
 
         /// <summary>
-        /// Enable the background periodic incremental updates.
+        /// Enable the background periodic updates.
         /// </summary>
         public bool EnablePeriodicUpdates
         {
@@ -97,7 +105,7 @@ namespace FriendsAchievementFeed.Models
         }
 
         /// <summary>
-        /// Hours between periodic background incremental updates.
+        /// Hours between periodic background updates.
         /// </summary>
         public int PeriodicUpdateHours
         {
@@ -170,9 +178,60 @@ namespace FriendsAchievementFeed.Models
             set => SetValue(ref _hasGameFeedGroups, value);
         }
 
+        /// <summary>
+        /// Exposed global feed entries for theme usage. Persisted to plugin settings
+        /// so themes (including Fullscreen) can build their own UI.
+        /// </summary>
+        /// <summary>
+        /// Path to the global cache directory for theme usage. Persisted to plugin settings
+        /// so themes (including Fullscreen) can read per-game cache files directly.
+        /// </summary>
+        public string ExposedGlobalFeedPath
+        {
+            get => _exposedGlobalFeedPath;
+            set => SetValue(ref _exposedGlobalFeedPath, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Exposed per-game feed entries keyed by PlayniteGameId (string) or AppId string fallback.
+        /// Persisted to plugin settings for theme consumption.
+        /// </summary>
+        /// <summary>
+        /// Exposed per-game feed cache file paths keyed by PlayniteGameId (string) or AppId string fallback.
+        /// Persisted to plugin settings for theme consumption.
+        /// </summary>
+        public Dictionary<string, string> ExposedGameFeeds
+        {
+            get => _exposedGameFeeds;
+            set => SetValue(ref _exposedGameFeeds, value ?? new Dictionary<string, string>());
+        }
+
         // Parameterless ctor for deserialization
         public FriendsAchievementFeedSettings()
         {
+        }
+
+        public List<int> ForcedScanAppIds { get; set; } = new List<int>();
+
+        // How often we will re-check forced-scan games per friend (because no playtime delta)
+        public int ForcedScanIntervalHours { get; set; } = 24;
+
+        public bool IsForcedScanEnabled(int appId)
+            => appId > 0 && ForcedScanAppIds != null && ForcedScanAppIds.Contains(appId);
+
+        public void ToggleForcedScan(int appId)
+        {
+            if (appId <= 0) return;
+            ForcedScanAppIds ??= new List<int>();
+
+            if (ForcedScanAppIds.Contains(appId))
+            {
+                ForcedScanAppIds.Remove(appId);
+            }
+            else
+            {
+                ForcedScanAppIds.Add(appId);
+            }
         }
 
         public FriendsAchievementFeedSettings(FriendsAchievementFeedPlugin plugin)
@@ -180,12 +239,12 @@ namespace FriendsAchievementFeed.Models
             _plugin = plugin;
 
             var saved = _plugin.LoadPluginSettings<FriendsAchievementFeedSettings>();
-            if (saved != null)
-            {
-                SteamApiKey = saved.SteamApiKey;
-                SteamUserId = saved.SteamUserId;
+                if (saved != null)
+                {
+                    SteamUserId = saved.SteamUserId;
+                    SteamApiKey = saved.SteamApiKey ?? string.Empty;
+                SteamLanguage = string.IsNullOrWhiteSpace(saved.SteamLanguage) ? SteamLanguage : saved.SteamLanguage;
                 MaxFeedItems = saved.MaxFeedItems;
-                RebuildParallelism = saved.RebuildParallelism;
                 EnablePeriodicUpdates = saved.EnablePeriodicUpdates;
                 PeriodicUpdateHours = saved.PeriodicUpdateHours;
                 FriendAvatarSize = saved.FriendAvatarSize;
@@ -197,6 +256,8 @@ namespace FriendsAchievementFeed.Models
                 EnableNotifications = saved.EnableNotifications;
                 NotifyPeriodicUpdates = saved.NotifyPeriodicUpdates;
                 NotifyOnRebuild = saved.NotifyOnRebuild;
+                ExposedGlobalFeedPath = saved.ExposedGlobalFeedPath ?? string.Empty;
+                ExposedGameFeeds = saved.ExposedGameFeeds ?? new Dictionary<string, string>();
             }
         }
 
@@ -209,10 +270,10 @@ namespace FriendsAchievementFeed.Models
         {
             if (_editingClone != null)
             {
-                SteamApiKey = _editingClone.SteamApiKey;
                 SteamUserId = _editingClone.SteamUserId;
+                SteamApiKey = _editingClone.SteamApiKey;
+                SteamLanguage = _editingClone.SteamLanguage;
                 MaxFeedItems = _editingClone.MaxFeedItems;
-                RebuildParallelism = _editingClone.RebuildParallelism;
                 EnablePeriodicUpdates = _editingClone.EnablePeriodicUpdates;
                 PeriodicUpdateHours = _editingClone.PeriodicUpdateHours;
                 FriendAvatarSize = _editingClone.FriendAvatarSize;
@@ -239,11 +300,6 @@ namespace FriendsAchievementFeed.Models
             if (string.IsNullOrWhiteSpace(SteamUserId))
             {
                 errors.Add(ResourceProvider.GetString("LOCFriendsAchFeed_Error_MissingSteamUserId"));
-            }
-
-            if (string.IsNullOrWhiteSpace(SteamApiKey))
-            {
-                errors.Add(ResourceProvider.GetString("LOCFriendsAchFeed_Error_MissingSteamApiKey"));
             }
 
             if (MaxFeedItems <= 0)

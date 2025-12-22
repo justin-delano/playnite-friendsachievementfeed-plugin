@@ -29,7 +29,6 @@ namespace FriendsAchievementFeed.Models
             set => SetValue(ref _achievementIconUrl, value);
         }
 
-        // unlocked icon URL (original); used when revealing a locked achievement
         private string _achievementIconUnlockedUrl;
         public string AchievementIconUnlockedUrl
         {
@@ -44,14 +43,56 @@ namespace FriendsAchievementFeed.Models
             set => SetValue(ref _hideDescription, value);
         }
 
+        //  Treat this as UTC internally
         private DateTime? _myUnlockTime;
         public DateTime? MyUnlockTime
         {
             get => _myUnlockTime;
-            set => SetValue(ref _myUnlockTime, value);
+            set
+            {
+                // Normalise to UTC
+                DateTime? utc = null;
+                if (value.HasValue)
+                {
+                    var v = value.Value;
+                    if (v.Kind == DateTimeKind.Utc)
+                        utc = v;
+                    else if (v.Kind == DateTimeKind.Local)
+                        utc = v.ToUniversalTime();
+                    else
+                        utc = DateTime.SpecifyKind(v, DateTimeKind.Utc);
+                }
+
+                SetValue(ref _myUnlockTime, utc);
+                OnPropertyChanged(nameof(MyUnlockTimeLocal));
+            }
         }
 
-        public DateTime UnlockTime { get; set; }
+        // Convenience for binding: local view
+        public DateTime? MyUnlockTimeLocal => _myUnlockTime?.ToLocalTime();
+
+        private DateTime _unlockTime;
+        public DateTime UnlockTime
+        {
+            get => DateTime.SpecifyKind(_unlockTime, DateTimeKind.Utc);
+            set
+            {
+                var v = value;
+                if (v.Kind == DateTimeKind.Local)
+                {
+                    v = v.ToUniversalTime();
+                }
+                else if (v.Kind == DateTimeKind.Unspecified)
+                {
+                    v = DateTime.SpecifyKind(v, DateTimeKind.Utc);
+                }
+
+                SetValue(ref _unlockTime, v);
+                OnPropertyChanged(nameof(UnlockTimeLocal));
+            }
+        }
+
+        public DateTime UnlockTimeLocal => UnlockTime.ToLocalTime();
 
         private bool _isRevealed = false;
         public bool IsRevealed
@@ -98,6 +139,15 @@ namespace FriendsAchievementFeed.Models
         public string SubheaderText { get; set; }  // e.g. "Thursday, December 12, 2024"
 
         public List<FeedEntry> Achievements { get; } = new List<FeedEntry>();
+    }
+    public class ProgressReport
+    {
+        public string Message { get; set; }
+        public int CurrentStep { get; set; }
+        public int TotalSteps { get; set; }
+        public double PercentComplete => TotalSteps > 0 ? (double)CurrentStep / TotalSteps * 100 : 0;
+        // Indicates whether this report represents a cancellation outcome.
+        public bool IsCanceled { get; set; } = false;
     }
 }
 

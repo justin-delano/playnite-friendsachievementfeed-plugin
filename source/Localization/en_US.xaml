@@ -12,15 +12,20 @@
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Status_Sample">Preview: sample cached feed</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamConnection">Steam Connection</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey">Steam Web API Key</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamUserId">Your SteamID64</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamUserId_Hint">This should be your 64-bit Steam ID (not your profile name).</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey">Steam Web API Key</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey_Hint">Steam Web API key improves friend/owned game lookups.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Default">Steam auth status: unknown</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckSteamAuth">Check Steam Authentication</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">Reauthenticate (open browser)</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Settings_FeedLimits">Feed Limits</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_MaxFeedEntries">Default Feed Entries</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickRebuildPairLimit">Quick Rebuild: Recent Achievements To Inspect</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickRebuildPairLimit_Desc">Number of most recent achievements to inspect when running a quick (incremental) rebuild.</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Advanced">Advanced and Performance</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_RebuildParallelism">Rebuild Parallelism</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_EnablePeriodicUpdates">Enable Background Periodic Updates</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_HoursBetweenUpdates">Hours Between Updates:</sys:String>
 
@@ -37,10 +42,8 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames">Search all my owned games (not only mutual games)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames_Desc">When enabled, the plugin will search for achievements across all games you own. If disabled, only games both you and your friend own (mutual games) will be scanned.</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick">Quick ⚡</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick_Tooltip">Quick Incremental Rebuild</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full">Full 🔄</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full_Tooltip">Full Rebuild (Comprehensive)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh">Refresh 🔄</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip">Refresh Feed</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel">Cancel</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip">Cancel Running Rebuild</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Friend">Friend:</sys:String>
@@ -61,7 +64,27 @@
 
     <sys:String x:Key="LOCFriendsAchFeed_Error_SteamNotConfigured">Steam API key or User ID not configured</sys:String>
 
+    <!-- New cache / settings strings -->
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Title">Cache</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Description">Wipe the plugin's cached achievement data (global and per-game files).</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_WipeCache_All">Wipe All Cache</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Wiped">Cache wiped.</sys:String>
+
+    <!-- Steam auth messages -->
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_OK">Steam authentication OK</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Failed">Steam authentication failed</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_ReauthStarted">Opened Steam login in browser.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_MissingCredentials">Missing Steam API key or Steam User ID.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_InvalidSteamId">Invalid Steam User ID.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_NoResponse">No player summary returned (invalid key or user).</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_OK">Steam auth OK</sys:String>
+
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundOwnedGames_LoadingFriends">Found {0} Steam games you own. Loading friends list...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_FoundOwnedGames">Found {0} Steam games you own. Preparing targeted update...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_BuildingLiveFeed">Building live feed for {0} specified games...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingOwnedGames">Preparing targeted update: loading owned games...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_BuildingOwnedGames">Building owned-games library map...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingFriends">Loading friends list...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundFriends_LoadingAchievements">Found {0} friends. Loading achievements...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">Found {0} new achievement entries...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_CacheMerged">Cache merged with {0} new achievements</sys:String>
@@ -91,8 +114,15 @@
     <sys:String x:Key="LOCFriendsAchFeed_Status_Never">Never</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Error_MissingSteamUserId">SteamID64 is required for the feed to work.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Error_MissingSteamApiKey">Steam Web API key is required for friends/game data.</sys:String>
+    
+    <sys:String x:Key="LOCFriendsAchFeed_Error_FileOperationFailed">Failed to {0}. See log for details.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_NotifySubscribers">Error while notifying {0} subscribers.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_TargetedCacheUpdate">Error while performing targeted cache update for changed games.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_ManagedRebuild">Unexpected error during managed rebuild. See log for details.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_CancelActiveRebuild">Failed to cancel active rebuild. See log for details.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Debug_TargetedUpdateSkipped">Skipping targeted cache update because a rebuild is already running.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Error_InvalidMaxFeedItems">Max feed items must be greater than 0.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_InvalidQuickRebuildPairLimit">Quick rebuild pair limit must be greater than 0.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_WindowTitle_GameFeedFor">Friends Achievements Feed for {0}</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_FriendsActivity_Count">Friends activity: {0} entries</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_NoFriendAchievementsForGame">No friend achievements for this game.</sys:String>

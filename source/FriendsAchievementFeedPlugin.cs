@@ -16,7 +16,7 @@ namespace FriendsAchievementFeed
 {
     public class FriendsAchievementFeedPlugin : GenericPlugin
     {
-                private static readonly ILogger Logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
+        private static readonly ILogger Logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
 
         public const string SourceName = "FriendsAchievementFeed";
 
@@ -55,6 +55,18 @@ namespace FriendsAchievementFeed
             });
         }
 
+        public override Control GetGameViewControl(GetGameViewControlArgs args)
+        {
+            if (args.Name == "GameFeedTab")
+            {
+                var control = new GameFeedControl(PlayniteApi, _settings, Logger, _feedService);
+                control.ApplyGameViewLayout();
+                return control;
+            }
+
+            return null;
+        }
+
         public override ISettings GetSettings(bool firstRunSettings)
         {
             return _settings;
@@ -62,7 +74,7 @@ namespace FriendsAchievementFeed
 
         public override UserControl GetSettingsView(bool firstRunView)
         {
-            return new SettingsControl();
+            return new SettingsControl(this);
         }
 
         // === Menus ===
@@ -75,24 +87,75 @@ namespace FriendsAchievementFeed
 
         public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
         {
-            if (args.Games == null || !args.Games.Any())
+            if (args?.Games == null || !args.Games.Any())
             {
                 yield break;
             }
 
-                yield return new GameMenuItem
+            var game = args.Games.FirstOrDefault();
+            if (game == null)
+            {
+                yield break;
+            }
+
+            // Put everything under this submenu:
+            var section = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"); // e.g. "Friends Achievement Feed"
+
+            // 1) Open feed
+            yield return new GameMenuItem
+            {
+                MenuSection = section,
+                Description = "Open Feed",
+                Action = _ =>
                 {
-                    Description = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"),
-                Action = gameMenuArgs =>
+                    try { ShowGameFeedWindow(game); }
+                    catch (Exception ex) { Logger.Error(ex, "Failed to open game feed window."); }
+                }
+            };
+
+            // Only add the forced-scan toggle for Steam games
+            if (!int.TryParse(game.GameId, out var appId) || appId <= 0)
+            {
+                yield break;
+            }
+
+            var enabled = _settings?.IsForcedScanEnabled(appId) == true;
+
+            // 2) Forced scan toggle
+            yield return new GameMenuItem
+            {
+                MenuSection = section,
+                Description = enabled ? "Disable forced scan" : "Enable forced scan",
+                Action = __ =>
                 {
-                    var game = gameMenuArgs.Games.FirstOrDefault();
-                    if (game != null)
+                    try
                     {
-                        ShowGameFeedWindow(game);
+                        _settings.BeginEdit();
+                        _settings.ToggleForcedScan(appId);
+                        _settings.EndEdit();
                     }
+                    catch (Exception ex)
+                    {
+                        Logger.Error(ex, "Failed to toggle forced scan setting.");
+                        try { _settings.CancelEdit(); } catch { }
+                        return;
+                    }
+
+                    _ = System.Threading.Tasks.Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _feedService.StartManagedRebuildAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error(ex, "Failed to rebuild after forced scan toggle.");
+                        }
+                    });
                 }
             };
         }
+
 
         // === Windows ===
 
@@ -112,7 +175,7 @@ namespace FriendsAchievementFeed
 
             var host = new UserControl { Content = view };
 
-                var titleFormat = ResourceProvider.GetString("LOCFriendsAchFeed_WindowTitle_GameFeedFor");
+            var titleFormat = ResourceProvider.GetString("LOCFriendsAchFeed_WindowTitle_GameFeedFor");
             var title = string.Format(titleFormat, game.Name);
 
             var window = PlayniteUiHelper.CreateExtensionWindow(title, host, windowOptions);
@@ -123,8 +186,7 @@ namespace FriendsAchievementFeed
 
         public override IEnumerable<SidebarItem> GetSidebarItems()
         {
-            // Single sidebar entry: Friends feed (global view)
-                yield return new SidebarItem
+            yield return new SidebarItem
             {
                 Title = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"),
                 Type = SiderbarItemType.View,
@@ -155,6 +217,19 @@ namespace FriendsAchievementFeed
 
         public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
         {
+            InitializeHasGameFeedGroups();
+            StartBackgroundUpdateLoop();
+            SubscribeToLibraryChanges();
+        }
+
+        public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
+        {
+            StopBackgroundUpdateLoop();
+            UnsubscribeFromLibraryChanges();
+        }
+
+        private void InitializeHasGameFeedGroups()
+        {
             try
             {
                 var initialGame = PlayniteApi.MainView?.SelectedGames?.FirstOrDefault();
@@ -164,141 +239,172 @@ namespace FriendsAchievementFeed
             {
                 Logger.Error(ex, "Failed to initialize HasGameFeedGroups on startup.");
             }
+        }
 
-            // Background periodic update loop
+        private void StartBackgroundUpdateLoop()
+        {
             _backgroundCts = new System.Threading.CancellationTokenSource();
             var token = _backgroundCts.Token;
 
             System.Threading.Tasks.Task.Run(async () =>
             {
-                var initialDelay = TimeSpan.FromSeconds(20);
-                var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
+                await PeriodicUpdateLoop(token).ConfigureAwait(false);
+            }, token);
+        }
 
+        private async System.Threading.Tasks.Task PeriodicUpdateLoop(System.Threading.CancellationToken token)
+        {
+            var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
+
+            while (!token.IsCancellationRequested)
+            {
                 try
                 {
-                    await System.Threading.Tasks.Task.Delay(initialDelay, token);
-
-                    while (!token.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            var threshold = interval;
-                            var cacheLast = _feedService.GetCacheLastUpdated();
-                            Logger.Debug($"[PeriodicUpdate] Cache valid={_feedService.IsCacheValid()}, lastUpdatedUtc={cacheLast?.ToString() ?? "(none)"}");
-
-                            if (!_settings.EnablePeriodicUpdates)
-                            {
-                                Logger.Debug("[PeriodicUpdate] Periodic updates disabled via settings; sleeping.");
-                            }
-
-                            if (_settings.EnablePeriodicUpdates &&
-                                (!_feedService.IsCacheValid() ||
-                                 !cacheLast.HasValue ||
-                                 DateTime.UtcNow - cacheLast.Value >= threshold))
-                            {
-                                Logger.Debug("[PeriodicUpdate] Triggering incremental cache update...");
-
-                                try
-                                {
-                                    // Subscribe to service progress for logging
-                                    EventHandler<ProgressReport> progressHandler = (s, report) =>
-                                    {
-                                        if (report != null)
-                                        {
-                                            Logger.Debug($"[PeriodicUpdate] {report.Message} ({report.PercentComplete}%)");
-                                        }
-                                    };
-
-                                    try
-                                    {
-                                        _feedService.RebuildProgress += progressHandler;
-                                        await _feedService.StartManagedRebuildAsync(CacheRebuildMode.Incremental).ConfigureAwait(false);
-                                        Logger.Debug("[PeriodicUpdate] Incremental cache update completed.");
-
-                                        // Optional toast notification
-                                        try
-                                        {
-                                            if (_settings != null &&
-                                                _settings.EnableNotifications &&
-                                                _settings.NotifyPeriodicUpdates)
-                                            {
-                                                var lastStatus = _feedService.GetLastRebuildStatus()
-                                                                  ?? ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Completed");
-
-                                                try
-                                                {
-                                                        PlayniteApi.Notifications.Add(new NotificationMessage(
-                                                        $"FriendsAchievementFeed-Periodic-{Guid.NewGuid()}",
-                                                        $"{ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName")}\n{lastStatus}",
-                                                        NotificationType.Info));
-                                                }
-                                                catch (Exception ex)
-                                                {
-                                                    Logger.Debug(ex, "Failed to show periodic notification.");
-                                                }
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            Logger.Debug(ex, "Error in periodic update notification block.");
-                                        }
-                                    }
-                                    finally
-                                    {
-                                        _feedService.RebuildProgress -= progressHandler;
-                                    }
-
-                                    // Re-evaluate game flag after rebuild
-                                    try
-                                    {
-                                        var currentGame = PlayniteApi.MainView?.SelectedGames?.FirstOrDefault();
-                                        UpdateGameFeedGroupsFlag(currentGame);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        Logger.Error(ex, "[PeriodicUpdate] Failed to update HasGameFeedGroups after cache rebuild.");
-                                    }
-                                }
-                                catch (OperationCanceledException) when (token.IsCancellationRequested)
-                                {
-                                    // graceful shutdown
-                                }
-                                catch (Exception ex)
-                                {
-                                    Logger.Error(ex, "[PeriodicUpdate] Failed to perform incremental update");
-                                }
-                            }
-                            else
-                            {
-                                Logger.Debug("[PeriodicUpdate] Cache is recent; skipping update.");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Error(ex, "[PeriodicUpdate] Unexpected error in periodic update loop");
-                        }
-
-                        try
-                        {
-                            await System.Threading.Tasks.Task.Delay(interval, token);
-                        }
-                        catch (OperationCanceledException) when (token.IsCancellationRequested)
-                        {
-                            break;
-                        }
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    // plugin or app shutting down
+                    await PerformUpdateIfNeeded(interval, token).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error(ex, "Failed to start periodic cache update loop");
+                    Logger.Error(ex, "[PeriodicUpdate] Unexpected error in periodic update loop");
                 }
-            }, token);
 
-            // Subscribe to library changes to trigger targeted cache updates for changed games
+                await DelayNextUpdate(interval, token).ConfigureAwait(false);
+            }
+        }
+
+        private async System.Threading.Tasks.Task PerformUpdateIfNeeded(TimeSpan interval, System.Threading.CancellationToken token)
+        {
+            if (ShouldPerformUpdate(interval))
+            {
+                await ExecuteDeltaUpdate(token).ConfigureAwait(false);
+            }
+            else
+            {
+                Logger.Debug("[PeriodicUpdate] Cache is recent; skipping update.");
+            }
+        }
+
+        private bool ShouldPerformUpdate(TimeSpan interval)
+        {
+            var cacheLast = _feedService.GetCacheLastUpdated();
+            Logger.Debug($"[PeriodicUpdate] Cache valid={_feedService.IsCacheValid()}, lastUpdatedUtc={cacheLast?.ToString() ?? "(none)"}");
+
+            return _settings.EnablePeriodicUpdates &&
+                   (!_feedService.IsCacheValid() ||
+                    !cacheLast.HasValue ||
+                    DateTime.UtcNow - cacheLast.Value >= interval);
+        }
+
+        /// <summary>
+        /// Delta-only cache update (works for first build too).
+        /// </summary>
+        private async System.Threading.Tasks.Task ExecuteDeltaUpdate(System.Threading.CancellationToken token)
+        {
+            Logger.Debug("[PeriodicUpdate] Triggering delta cache update...");
+
+            try
+            {
+                EventHandler<ProgressReport> progressHandler = (s, report) =>
+                {
+                    if (report != null)
+                    {
+                        Logger.Debug($"[PeriodicUpdate] {report.Message} ({report.PercentComplete}%)");
+                    }
+                };
+
+                try
+                {
+                    _feedService.RebuildProgress += progressHandler;
+
+                    // Updated: mode-less, delta-only
+                    await _feedService.StartManagedRebuildAsync().ConfigureAwait(false);
+
+                    Logger.Debug("[PeriodicUpdate] Delta cache update completed.");
+                    HandleUpdateCompletion();
+                }
+                finally
+                {
+                    _feedService.RebuildProgress -= progressHandler;
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Graceful shutdown
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "[PeriodicUpdate] Failed to perform delta update");
+            }
+        }
+
+        private void HandleUpdateCompletion()
+        {
+            ShowPeriodicUpdateNotification();
+            UpdateGameFeedGroupsForCurrentGame();
+        }
+
+        private void ShowPeriodicUpdateNotification()
+        {
+            if (_settings?.EnableNotifications == true && _settings.NotifyPeriodicUpdates)
+            {
+                var lastStatus = _feedService.GetLastRebuildStatus() ?? ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Completed");
+                var message = $"{ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName")}\n{lastStatus}";
+
+                try
+                {
+                    PlayniteApi.Notifications.Add(new NotificationMessage(
+                        $"FriendsAchievementFeed-Periodic-{Guid.NewGuid()}",
+                        message,
+                        NotificationType.Info));
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug(ex, "Failed to show periodic notification.");
+                }
+            }
+        }
+
+        private void UpdateGameFeedGroupsForCurrentGame()
+        {
+            try
+            {
+                var currentGame = PlayniteApi.MainView?.SelectedGames?.FirstOrDefault();
+                UpdateGameFeedGroupsFlag(currentGame);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(ex, "[PeriodicUpdate] Failed to update HasGameFeedGroups after cache rebuild.");
+            }
+        }
+
+        private async System.Threading.Tasks.Task DelayNextUpdate(TimeSpan interval, System.Threading.CancellationToken token)
+        {
+            try
+            {
+                await System.Threading.Tasks.Task.Delay(interval, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // Loop will terminate
+            }
+        }
+
+        private void StopBackgroundUpdateLoop()
+        {
+            try
+            {
+                _backgroundCts?.Cancel();
+                _feedService?.CancelActiveRebuild();
+                _backgroundCts?.Dispose();
+                _backgroundCts = null;
+            }
+            catch
+            {
+                // ignore shutdown errors
+            }
+        }
+
+        private void SubscribeToLibraryChanges()
+        {
             try
             {
                 if (PlayniteApi.Database.Games is System.Collections.Specialized.INotifyCollectionChanged incc)
@@ -316,19 +422,8 @@ namespace FriendsAchievementFeed
             }
         }
 
-        public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
+        private void UnsubscribeFromLibraryChanges()
         {
-            try
-            {
-                _backgroundCts?.Cancel();
-                _feedService?.CancelActiveRebuild();
-                _backgroundCts?.Dispose();
-                _backgroundCts = null;
-            }
-            catch
-            {
-                // ignore shutdown errors
-            }
             try
             {
                 if (PlayniteApi.Database.Games is System.Collections.Specialized.INotifyCollectionChanged incc)
@@ -344,57 +439,45 @@ namespace FriendsAchievementFeed
 
         private void Database_Games_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
-            try
+            var appIds = new HashSet<int>();
+
+            ProcessGameItems(e.NewItems, appIds);
+            ProcessGameItems(e.OldItems, appIds);
+
+            if (!appIds.Any())
             {
-                var ids = new List<int>();
-
-                if (e.NewItems != null)
-                {
-                    foreach (var ni in e.NewItems)
-                    {
-                        if (ni is Game g && int.TryParse(g.GameId, out var appId) && appId != 0)
-                        {
-                            ids.Add(appId);
-                        }
-                    }
-                }
-
-                if (e.OldItems != null)
-                {
-                    foreach (var oi in e.OldItems)
-                    {
-                        if (oi is Game g && int.TryParse(g.GameId, out var appId) && appId != 0)
-                        {
-                            ids.Add(appId);
-                        }
-                    }
-                }
-
-                if (ids.Count == 0)
-                {
-                    return;
-                }
-
-                // Deduplicate
-                ids = ids.Distinct().ToList();
-
-                // Fire-and-forget targeted update
-                System.Threading.Tasks.Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _feedService.UpdateCacheForAppIdsAsync(ids).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error(ex, "Error during targeted cache update after library change.");
-                    }
-                });
+                return;
             }
-            catch (Exception ex)
+
+            TriggerTargetedCacheUpdate(appIds.ToList());
+        }
+
+        private void ProcessGameItems(System.Collections.IList items, HashSet<int> appIds)
+        {
+            if (items == null) return;
+
+            foreach (var item in items)
             {
-                Logger.Debug(ex, "Error handling library collection change.");
+                if (item is Game game && int.TryParse(game.GameId, out var appId) && appId != 0)
+                {
+                    appIds.Add(appId);
+                }
             }
+        }
+
+        private void TriggerTargetedCacheUpdate(List<int> appIds)
+        {
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                try
+                {
+                    await _feedService.UpdateCacheForAppIdsAsync(appIds).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error(ex, "Error during targeted cache update after library change.");
+                }
+            });
         }
 
         // === Game selection / theme flag wiring ===
@@ -413,11 +496,7 @@ namespace FriendsAchievementFeed
             {
                 if (game != null)
                 {
-                    var allEntries = _feedService.GetAllCachedEntries() ?? new List<FeedEntry>();
-
-                    // If any cached entry for this game exists, flag as having groups
-                    hasGroups = allEntries.Any(e =>
-                        string.Equals(e.GameName, game.Name, StringComparison.OrdinalIgnoreCase));
+                    hasGroups = _feedService.GameHasFeedEntries(game.Name);
                 }
             }
             catch (Exception ex)
