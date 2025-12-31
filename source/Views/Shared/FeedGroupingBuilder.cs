@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using FriendsAchievementFeed.Models;
 
 namespace FriendsAchievementFeed.Views
@@ -18,7 +17,7 @@ namespace FriendsAchievementFeed.Views
             {
                 if (e == null) continue;
 
-                var local = asLocalFromUtc(e.UnlockTime);
+                var local = asLocalFromUtc(e.FriendUnlockTime);
                 var day = local.Date;
 
                 if (current == null ||

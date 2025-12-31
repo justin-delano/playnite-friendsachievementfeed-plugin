@@ -17,6 +17,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey">Steam Web API Key</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey_Hint">Steam Web API key improves friend/owned game lookups.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Default">Steam auth status: unknown</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Checking">Checking...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckSteamAuth">Check Steam Authentication</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">Reauthenticate (open browser)</sys:String>
 
@@ -37,7 +38,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_FriendAvatarSize">Friend Avatar Size (px)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_AchievementIconSize">Achievement Icon Size (px)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_HideLocked">Hide My Locked Achievements</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_ShowMyUnlockTime">Show My Unlock Time</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_ShowSelfUnlockTime">Show My Unlock Time</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_GameFeedTabHeight">Game Feed Tab Height (px)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames">Search all my owned games (not only mutual games)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames_Desc">When enabled, the plugin will search for achievements across all games you own. If disabled, only games both you and your friend own (mutual games) will be scanned.</sys:String>
@@ -49,7 +50,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Friend">Friend:</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Achievement">Achievement:</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Game">Game:</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_MyUnlockTime">You unlocked:</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_SelfUnlockTime">You unlocked:</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Status_CacheLast">Cache Last Updated: </sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Tooltip_SearchAchievement">Search Achievement Text</sys:String>
@@ -62,13 +63,14 @@
 
     <sys:String x:Key="LOCFriendsAchFeed_Error_RefreshFeedAfterCacheChange">Error refreshing feed after cache change.</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamNotConfigured">Steam API key or User ID not configured</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamNotConfigured">Steam API Key or Web Auth not configured</sys:String>
 
     <!-- New cache / settings strings -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Title">Cache</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Description">Wipe the plugin's cached achievement data (global and per-game files).</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_WipeCache_All">Wipe All Cache</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Wiped">Cache wiped.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_WipeFailed">Failed to wipe cache (files remain).</sys:String>
 
     <!-- Steam auth messages -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_OK">Steam authentication OK</sys:String>
@@ -78,6 +80,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_InvalidSteamId">Invalid Steam User ID.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_NoResponse">No player summary returned (invalid key or user).</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_OK">Steam auth OK</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckingSteamAuth">Checking Steam authentication...</sys:String>
 
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundOwnedGames_LoadingFriends">Found {0} Steam games you own. Loading friends list...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Targeted_FoundOwnedGames">Found {0} Steam games you own. Preparing targeted update...</sys:String>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows;
 using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Services;
 using FriendsAchievementFeed.Views;
@@ -11,18 +12,26 @@ using Playnite.SDK.Events;
 using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using Common;
+using System.Threading.Tasks;
+using System.Threading;
 
 namespace FriendsAchievementFeed
 {
     public class FriendsAchievementFeedPlugin : GenericPlugin
     {
-        private static readonly ILogger Logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
+        private static readonly ILogger _logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
 
         public const string SourceName = "FriendsAchievementFeed";
 
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly AchievementFeedService _feedService;
-        private System.Threading.CancellationTokenSource _backgroundCts;
+
+        private CancellationTokenSource _backgroundCts;
+
+        // Startup gate: ensure SteamID64 persistence happens BEFORE anything else.
+        private readonly object _startupInitLock = new object();
+        private Task _startupInitTask;
+        private CancellationTokenSource _startupInitCts;
 
         public override Guid Id { get; } =
             Guid.Parse("10f90193-72aa-4cdb-b16d-3e6b1f0feb17");
@@ -39,7 +48,7 @@ namespace FriendsAchievementFeed
                 HasSettings = true
             };
 
-            _feedService = new AchievementFeedService(api, _settings, Logger, this);
+            _feedService = new AchievementFeedService(api, _settings, _logger, this);
 
             // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
@@ -59,7 +68,7 @@ namespace FriendsAchievementFeed
         {
             if (args.Name == "GameFeedTab")
             {
-                var control = new GameFeedControl(PlayniteApi, _settings, Logger, _feedService);
+                var control = new GameFeedControl(PlayniteApi, _settings, _logger, _feedService);
                 control.ApplyGameViewLayout();
                 return control;
             }
@@ -74,15 +83,99 @@ namespace FriendsAchievementFeed
 
         public override UserControl GetSettingsView(bool firstRunView)
         {
-            return new SettingsControl(this);
+            return new SettingsControl(this, _logger);
         }
 
         // === Menus ===
 
         public override IEnumerable<MainMenuItem> GetMainMenuItems(GetMainMenuItemsArgs args)
         {
-            // Global menu entry removed; everything is via sidebar/game tab now.
-            yield break;
+            return new List<MainMenuItem>
+            {
+                new MainMenuItem
+                {
+                    MenuSection = "FriendsAchievementFeed",
+                    Description = "Include unowned games scan…",
+                    Action = _ => StartIncludeUnownedScanFromMenu()
+                }
+            };
+        }
+
+        private void StartIncludeUnownedScanFromMenu()
+        {
+            try
+            {
+                var result = PlayniteApi.Dialogs.ShowMessage(
+                    "This will scan your Playnite Steam library and include games your friends do not own (or have zero playtime) for each selected family-sharing account.\n\n" +
+                    "This can take a while. Continue?",
+                    "Friends Achievement Feed",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+
+                var opts = new CacheRebuildOptions
+                {
+                    // ForceScanAllSteamLibraryGames = true
+                };
+
+                opts.FamilySharingFriendIDs = new List<string>();
+                if (!string.IsNullOrWhiteSpace(_settings?.Friend1SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend1SteamId);
+                if (!string.IsNullOrWhiteSpace(_settings?.Friend2SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend2SteamId);
+                if (!string.IsNullOrWhiteSpace(_settings?.Friend3SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend3SteamId);
+                if (!string.IsNullOrWhiteSpace(_settings?.Friend4SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend4SteamId);
+                if (!string.IsNullOrWhiteSpace(_settings?.Friend5SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend5SteamId);
+
+                // Blocking, cancellable progress dialog
+                PlayniteApi.Dialogs.ActivateGlobalProgress(async a =>
+                {
+                    a.Text = "Starting include-unowned-games scan…";
+                    a.IsIndeterminate = true;
+
+                    using var cancelReg = a.CancelToken.Register(() => _feedService.CancelActiveRebuild());
+
+                    EventHandler<ProgressReport> handler = (s, r) =>
+                    {
+                        if (r == null) return;
+
+                        a.Text = r.Message ?? a.Text;
+
+                        // Drive the bar from step counts (ProgressReport.PercentComplete is read-only in this build)
+                        if (r.TotalSteps > 0)
+                        {
+                            a.IsIndeterminate = false;
+                            a.ProgressMaxValue = r.TotalSteps;
+                            a.CurrentProgressValue = r.CurrentStep;
+                        }
+                        else
+                        {
+                            a.IsIndeterminate = true;
+                        }
+                    };
+
+                    _feedService.RebuildProgress += handler;
+                    try
+                    {
+                        await _feedService.StartManagedRebuildAsync(opts).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _feedService.RebuildProgress -= handler;
+                    }
+                },
+                new GlobalProgressOptions("Friends Achievement Feed — Include Unowned Games Scan")
+                {
+                    IsIndeterminate = true,
+                    Cancelable = true
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to start include-unowned-games scan.");
+            }
         }
 
         public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
@@ -109,59 +202,16 @@ namespace FriendsAchievementFeed
                 Action = _ =>
                 {
                     try { ShowGameFeedWindow(game); }
-                    catch (Exception ex) { Logger.Error(ex, "Failed to open game feed window."); }
-                }
-            };
-
-            // Only add the forced-scan toggle for Steam games
-            if (!int.TryParse(game.GameId, out var appId) || appId <= 0)
-            {
-                yield break;
-            }
-
-            var enabled = _settings?.IsForcedScanEnabled(appId) == true;
-
-            // 2) Forced scan toggle
-            yield return new GameMenuItem
-            {
-                MenuSection = section,
-                Description = enabled ? "Disable forced scan" : "Enable forced scan",
-                Action = __ =>
-                {
-                    try
-                    {
-                        _settings.BeginEdit();
-                        _settings.ToggleForcedScan(appId);
-                        _settings.EndEdit();
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error(ex, "Failed to toggle forced scan setting.");
-                        try { _settings.CancelEdit(); } catch { }
-                        return;
-                    }
-
-                    _ = System.Threading.Tasks.Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await _feedService.StartManagedRebuildAsync().ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Error(ex, "Failed to rebuild after forced scan toggle.");
-                        }
-                    });
+                    catch (Exception ex) { _logger.Error(ex, "Failed to open game feed window."); }
                 }
             };
         }
-
 
         // === Windows ===
 
         private void ShowGameFeedWindow(Game game)
         {
-            var view = new GameFeedControl(PlayniteApi, _settings, Logger, _feedService, game);
+            var view = new GameFeedControl(PlayniteApi, _settings, _logger, _feedService, game);
 
             var windowOptions = new WindowOptions
             {
@@ -193,7 +243,7 @@ namespace FriendsAchievementFeed
                 Icon = GetSidebarIcon(),
                 Opened = () => new ContentControl
                 {
-                    Content = new GlobalFeedControl(PlayniteApi, _settings, Logger, _feedService)
+                    Content = new GlobalFeedControl(PlayniteApi, _settings, _logger, _feedService)
                 }
             };
         }
@@ -217,15 +267,58 @@ namespace FriendsAchievementFeed
 
         public override void OnApplicationStarted(OnApplicationStartedEventArgs args)
         {
-            InitializeHasGameFeedGroups();
-            StartBackgroundUpdateLoop();
-            SubscribeToLibraryChanges();
+            // IMPORTANT:
+            // Do not start any other plugin work here.
+            // We gate startup so SteamID64 persistence happens first.
+            EnsureStartupInitialized();
         }
 
         public override void OnApplicationStopped(OnApplicationStoppedEventArgs args)
         {
+            // Stop startup init if still running
+            try
+            {
+                _startupInitCts?.Cancel();
+                _startupInitCts?.Dispose();
+                _startupInitCts = null;
+            }
+            catch { }
+
             StopBackgroundUpdateLoop();
-            UnsubscribeFromLibraryChanges();
+        }
+
+        private void EnsureStartupInitialized()
+        {
+            lock (_startupInitLock)
+            {
+                if (_startupInitTask != null)
+                {
+                    return;
+                }
+
+                _startupInitCts = new CancellationTokenSource();
+                var token = _startupInitCts.Token;
+
+                _startupInitTask = Task.Run(async () =>
+                {
+                    // 1) Persist SteamID64 BEFORE anything else starts
+                    await PersistSelfSteamId64OnStartupAsync(token).ConfigureAwait(false);
+
+                    // 2) Now start the rest of the plugin startup work
+                    try
+                    {
+                        await PlayniteApi.MainView.UIDispatcher.InvokeAsync(() =>
+                        {
+                            InitializeHasGameFeedGroups();
+                            StartBackgroundUpdateLoop();
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "[FAF] Failed during post-auth startup initialization.");
+                    }
+                }, token);
+            }
         }
 
         private void InitializeHasGameFeedGroups()
@@ -237,22 +330,82 @@ namespace FriendsAchievementFeed
             }
             catch (Exception ex)
             {
-                Logger.Error(ex, "Failed to initialize HasGameFeedGroups on startup.");
+                _logger.Error(ex, "Failed to initialize HasGameFeedGroups on startup.");
             }
         }
 
         private void StartBackgroundUpdateLoop()
         {
-            _backgroundCts = new System.Threading.CancellationTokenSource();
+            _backgroundCts = new CancellationTokenSource();
             var token = _backgroundCts.Token;
 
-            System.Threading.Tasks.Task.Run(async () =>
+            Task.Run(async () =>
             {
                 await PeriodicUpdateLoop(token).ConfigureAwait(false);
             }, token);
         }
 
-        private async System.Threading.Tasks.Task PeriodicUpdateLoop(System.Threading.CancellationToken token)
+        private async Task PersistSelfSteamId64OnStartupAsync(CancellationToken token)
+        {
+            // If you already have it saved, don't touch it.
+            // NOTE: This assumes you have _settings.SteamUserId (SteamID64) in settings.
+            if (!string.IsNullOrWhiteSpace(_settings?.SteamUserId))
+            {
+                return;
+            }
+
+            // Short retries: catches "cookies not ready yet" without delaying startup too long.
+            // Total wait ~12 seconds. You can extend if needed.
+            var retryDelays = new[]
+            {
+                TimeSpan.Zero,
+                TimeSpan.FromSeconds(2),
+                TimeSpan.FromSeconds(10),
+            };
+
+            for (int attempt = 0; attempt < retryDelays.Length && !token.IsCancellationRequested; attempt++)
+            {
+                if (retryDelays[attempt] > TimeSpan.Zero)
+                {
+                    try { await Task.Delay(retryDelays[attempt], token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+                }
+
+                try
+                {
+                    using (var steam = new SteamClient(PlayniteApi, _logger, GetPluginUserDataPath()))
+                    {
+                        var id = await steam.GetSelfSteamId64Async(token).ConfigureAwait(false);
+
+                        if (!string.IsNullOrWhiteSpace(id) && ulong.TryParse(id, out _))
+                        {
+                            _settings.SteamUserId = id;
+
+                            // Save on UI thread (safer with Playnite settings)
+                            await PlayniteApi.MainView.UIDispatcher.InvokeAsync(() =>
+                            {
+                                SavePluginSettings(_settings);
+                            });
+
+                            _logger.Info($"[FAF] Detected SteamID64 from Playnite Steam session and saved to settings: {id}");
+                            return;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, $"[FAF] SteamID64 auto-detect attempt {attempt + 1} failed.");
+                }
+            }
+
+            _logger.Debug("[FAF] SteamID64 not detected on startup (user may not be logged into Steam via Playnite web login yet).");
+        }
+
+        private async Task PeriodicUpdateLoop(CancellationToken token)
         {
             var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
 
@@ -264,14 +417,14 @@ namespace FriendsAchievementFeed
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error(ex, "[PeriodicUpdate] Unexpected error in periodic update loop");
+                    _logger.Error(ex, "[PeriodicUpdate] Unexpected error in periodic update loop");
                 }
 
                 await DelayNextUpdate(interval, token).ConfigureAwait(false);
             }
         }
 
-        private async System.Threading.Tasks.Task PerformUpdateIfNeeded(TimeSpan interval, System.Threading.CancellationToken token)
+        private async Task PerformUpdateIfNeeded(TimeSpan interval, CancellationToken token)
         {
             if (ShouldPerformUpdate(interval))
             {
@@ -279,14 +432,14 @@ namespace FriendsAchievementFeed
             }
             else
             {
-                Logger.Debug("[PeriodicUpdate] Cache is recent; skipping update.");
+                _logger.Debug("[PeriodicUpdate] Cache is recent; skipping update.");
             }
         }
 
         private bool ShouldPerformUpdate(TimeSpan interval)
         {
             var cacheLast = _feedService.GetCacheLastUpdated();
-            Logger.Debug($"[PeriodicUpdate] Cache valid={_feedService.IsCacheValid()}, lastUpdatedUtc={cacheLast?.ToString() ?? "(none)"}");
+            _logger.Debug($"[PeriodicUpdate] Cache valid={_feedService.IsCacheValid()}, lastUpdatedUtc={cacheLast?.ToString() ?? "(none)"}");
 
             return _settings.EnablePeriodicUpdates &&
                    (!_feedService.IsCacheValid() ||
@@ -297,34 +450,16 @@ namespace FriendsAchievementFeed
         /// <summary>
         /// Delta-only cache update (works for first build too).
         /// </summary>
-        private async System.Threading.Tasks.Task ExecuteDeltaUpdate(System.Threading.CancellationToken token)
+        private async Task ExecuteDeltaUpdate(CancellationToken token)
         {
-            Logger.Debug("[PeriodicUpdate] Triggering delta cache update...");
+            _logger.Debug("[PeriodicUpdate] Triggering delta cache update...");
 
             try
             {
-                EventHandler<ProgressReport> progressHandler = (s, report) =>
-                {
-                    if (report != null)
-                    {
-                        Logger.Debug($"[PeriodicUpdate] {report.Message} ({report.PercentComplete}%)");
-                    }
-                };
+                await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
 
-                try
-                {
-                    _feedService.RebuildProgress += progressHandler;
-
-                    // Updated: mode-less, delta-only
-                    await _feedService.StartManagedRebuildAsync().ConfigureAwait(false);
-
-                    Logger.Debug("[PeriodicUpdate] Delta cache update completed.");
-                    HandleUpdateCompletion();
-                }
-                finally
-                {
-                    _feedService.RebuildProgress -= progressHandler;
-                }
+                _logger.Debug("[PeriodicUpdate] Delta cache update completed.");
+                HandleUpdateCompletion();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -332,7 +467,7 @@ namespace FriendsAchievementFeed
             }
             catch (Exception ex)
             {
-                Logger.Error(ex, "[PeriodicUpdate] Failed to perform delta update");
+                _logger.Error(ex, "[PeriodicUpdate] Failed to perform delta update");
             }
         }
 
@@ -358,7 +493,7 @@ namespace FriendsAchievementFeed
                 }
                 catch (Exception ex)
                 {
-                    Logger.Debug(ex, "Failed to show periodic notification.");
+                    _logger.Debug(ex, "Failed to show periodic notification.");
                 }
             }
         }
@@ -372,15 +507,15 @@ namespace FriendsAchievementFeed
             }
             catch (Exception ex)
             {
-                Logger.Error(ex, "[PeriodicUpdate] Failed to update HasGameFeedGroups after cache rebuild.");
+                _logger.Error(ex, "[PeriodicUpdate] Failed to update HasGameFeedGroups after cache rebuild.");
             }
         }
 
-        private async System.Threading.Tasks.Task DelayNextUpdate(TimeSpan interval, System.Threading.CancellationToken token)
+        private async Task DelayNextUpdate(TimeSpan interval, CancellationToken token)
         {
             try
             {
-                await System.Threading.Tasks.Task.Delay(interval, token).ConfigureAwait(false);
+                await Task.Delay(interval, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -403,55 +538,6 @@ namespace FriendsAchievementFeed
             }
         }
 
-        private void SubscribeToLibraryChanges()
-        {
-            try
-            {
-                if (PlayniteApi.Database.Games is System.Collections.Specialized.INotifyCollectionChanged incc)
-                {
-                    incc.CollectionChanged += Database_Games_CollectionChanged;
-                }
-                else
-                {
-                    Logger.Debug("Database.Games does not implement INotifyCollectionChanged; skipping subscription.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Debug(ex, "Failed to subscribe to database collection changed events.");
-            }
-        }
-
-        private void UnsubscribeFromLibraryChanges()
-        {
-            try
-            {
-                if (PlayniteApi.Database.Games is System.Collections.Specialized.INotifyCollectionChanged incc)
-                {
-                    incc.CollectionChanged -= Database_Games_CollectionChanged;
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        private void Database_Games_CollectionChanged(object sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        {
-            var appIds = new HashSet<int>();
-
-            ProcessGameItems(e.NewItems, appIds);
-            ProcessGameItems(e.OldItems, appIds);
-
-            if (!appIds.Any())
-            {
-                return;
-            }
-
-            TriggerTargetedCacheUpdate(appIds.ToList());
-        }
-
         private void ProcessGameItems(System.Collections.IList items, HashSet<int> appIds)
         {
             if (items == null) return;
@@ -463,21 +549,6 @@ namespace FriendsAchievementFeed
                     appIds.Add(appId);
                 }
             }
-        }
-
-        private void TriggerTargetedCacheUpdate(List<int> appIds)
-        {
-            System.Threading.Tasks.Task.Run(async () =>
-            {
-                try
-                {
-                    await _feedService.UpdateCacheForAppIdsAsync(appIds).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error(ex, "Error during targeted cache update after library change.");
-                }
-            });
         }
 
         // === Game selection / theme flag wiring ===
@@ -501,7 +572,7 @@ namespace FriendsAchievementFeed
             }
             catch (Exception ex)
             {
-                Logger.Error(ex, $"Failed to evaluate feed groups for game {game?.Name ?? "(null)"}.");
+                _logger.Error(ex, $"Failed to evaluate feed groups for game {game?.Name ?? "(null)"}.");
             }
 
             _settings.HasGameFeedGroups = hasGroups;

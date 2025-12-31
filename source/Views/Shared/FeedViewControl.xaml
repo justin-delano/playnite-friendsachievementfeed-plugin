@@ -16,34 +16,27 @@
 
     <Grid Margin="12">
         <Grid.RowDefinitions>
-            <!-- Filters -->
             <RowDefinition Height="Auto" />
-            <!-- Status -->
             <RowDefinition Height="Auto" />
-            <!-- Progress -->
             <RowDefinition Height="Auto" />
-            <!-- List -->
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- ROW 0: Filters + buttons -->
         <Grid Grid.Row="0" Margin="0,0,0,8">
-            <!-- Rows: label / input+buttons / game / label / input -->
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />   <!-- Friend label -->
-                <RowDefinition Height="Auto" />   <!-- Friend input + buttons -->
-                <RowDefinition Height="Auto" />   <!-- Game filter (optional) -->
-                <RowDefinition Height="Auto" />   <!-- Achievement label -->
-                <RowDefinition Height="Auto" />   <!-- Achievement input -->
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- Columns: filters area + buttons -->
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />    <!-- Filters -->
-                <ColumnDefinition Width="Auto" /> <!-- Buttons -->
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
-            <!-- Friend label (own row) -->
             <TextBlock Grid.Row="0"
                        Grid.Column="0"
                        Text="{DynamicResource LOCFriendsAchFeed_Feed_Label_Friend}"
@@ -51,11 +44,10 @@
                        VerticalAlignment="Center"
                        Foreground="{DynamicResource TextBrushDarker}" />
 
-            <!-- Friend input + clear button -->
             <Grid Grid.Row="1" Grid.Column="0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />    <!-- Combo -->
-                    <ColumnDefinition Width="30" />   <!-- Fixed space for clear button -->
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="30" />
                 </Grid.ColumnDefinitions>
 
                 <ComboBox x:Name="FriendFilterCombo"
@@ -69,7 +61,6 @@
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Center" />
 
-                <!-- Clear button -->
                 <Button Grid.Column="1"
                         Content="×"
                         Padding="0"
@@ -93,34 +84,74 @@
                 </Button>
             </Grid>
 
-            <!-- Buttons: same row as Friend input, heights bound to the combo -->
-            <StackPanel Grid.Row="1"
-                        Grid.Column="1"
-                        Orientation="Horizontal"
-                        Margin="50,0,0,0"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center">
-                <Button x:Name="RefreshButton"
-                    Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh}"
-                    Focusable="False"
-                    FontSize="12"
-                    Width="64"
-                    Margin="0,0,10,0"
-                    ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip}"
-                    Command="{Binding TriggerRebuildCommand}"
-                    Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
-                <Button x:Name="CancelRebuildButton"
-                    Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel}"
-                    Focusable="False"
-                    FontSize="12"
-                    Width="64"
-                    Margin="0,0,50,0"
-                    ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip}"
-                    Command="{Binding CancelRebuildCommand}"
-                    Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
-            </StackPanel>
+            <Grid Grid.Row="1"
+                Grid.Column="1"
+                Margin="50,0,0,0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center">
 
-            <!-- Game filter row (optional, provided via ExtraFiltersContent) -->
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- Row 0: buttons -->
+                <Button x:Name="RefreshButton"
+                        Grid.Row="0"
+                        Grid.Column="0"
+                        Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh}"
+                        Focusable="False"
+                        FontSize="12"
+                        Width="100"
+                        Margin="0,0,10,0"
+                        ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip}"
+                        Command="{Binding TriggerRebuildCommand}"
+                        Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
+
+                <Button x:Name="CancelRebuildButton"
+                        Grid.Row="0"
+                        Grid.Column="1"
+                        Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel}"
+                        Focusable="False"
+                        FontSize="12"
+                        Width="100"
+                        Margin="0,0,50,0"
+                        ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip}"
+                        Command="{Binding CancelRebuildCommand}"
+                        Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
+
+                <!-- Row 1: filler slot UNDER Refresh only -->
+                    <ContentControl Grid.Row="1"
+                                Grid.Column="0"
+                                Margin="0,5,0,0"
+                                Focusable="False"
+                                FontSize="12"
+                                HorizontalAlignment="Left"
+                                Width="{Binding ElementName=RefreshButton, Path=ActualWidth}"
+                                Content="{Binding ExtraRebuildContent,
+                                                RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}">
+
+                    <!-- Auto-collapse when empty -->
+                    <ContentControl.Style>
+                        <Style TargetType="ContentControl">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <Trigger Property="Content" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ContentControl.Style>
+                </ContentControl>
+
+            </Grid>
+
+
             <ContentPresenter Grid.Row="2"
                               Grid.Column="0"
                               Margin="0,4,0,0"
@@ -141,7 +172,6 @@
                 </ContentPresenter.Style>
             </ContentPresenter>
 
-            <!-- Achievement label (own row) -->
             <TextBlock Grid.Row="3"
                        Grid.Column="0"
                        Text="{DynamicResource LOCFriendsAchFeed_Feed_Label_Achievement}"
@@ -149,11 +179,10 @@
                        VerticalAlignment="Center"
                        Foreground="{DynamicResource TextBrushDarker}" />
 
-            <!-- Achievement input -->
             <Grid Grid.Row="4" Grid.Column="0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />    <!-- TextBox -->
-                    <ColumnDefinition Width="30" />   <!-- Fixed space for clear button -->
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="30" />
                 </Grid.ColumnDefinitions>
 
                 <TextBox Grid.Column="0"
@@ -201,7 +230,7 @@
                        Foreground="{DynamicResource TextBrushDarker}"
                        Opacity="0.7"
                        VerticalAlignment="Center" />
-            <TextBlock Text = " "
+            <TextBlock Text=" "
                        VerticalAlignment="Center"
                        Foreground="{DynamicResource TextBrushDarker}"
                        Opacity="0.7" />
@@ -246,7 +275,6 @@
                      VirtualizingStackPanel.VirtualizationMode="Recycling"
                      VirtualizingStackPanel.ScrollUnit="Pixel">
 
-                <!-- Remove outer ListBoxItem chrome / highlight -->
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="Padding" Value="0" />
@@ -279,7 +307,6 @@
                                            Source="{Binding FriendAvatarUrl}"
                                            VerticalAlignment="Center" />
                                     <StackPanel Margin="8,0,0,0">
-                                        <!-- Main header line -->
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding FriendPersonaName}"
                                                        FontWeight="SemiBold"
@@ -287,51 +314,76 @@
                                                        Cursor="Hand"
                                                        MouseLeftButtonUp="FriendName_Click" />
                                             <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Feed_Header_Achieved}"
-                                                       Margin="4,0,0,0"
-                                                       Foreground="{DynamicResource TextBrush}"
-                                                       Opacity="0.6" />
-                                            <TextBlock Text=" "
-                                                        Foreground="{DynamicResource TextBrush}"
-                                                        Opacity="0.6"/>
-                                            <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Feed_Header_In}"
-                                                       Foreground="{DynamicResource TextBrush}"
-                                                       Opacity="0.6">
+                                                Margin="4,0,0,0"
+                                                Foreground="{DynamicResource TextBrush}"
+                                                Opacity="0.6">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility"
-                                                                Value="Collapsed" />
+                                                        <Setter Property="Visibility" Value="Visible" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding ShowGameName}"
-                                                                         Value="True">
-                                                                <Setter Property="Visibility"
-                                                                        Value="Visible" />
+                                                            <!-- In global feed (ShowGameName=True), don't show "Achieved" -->
+                                                            <DataTrigger Binding="{Binding ShowGameName, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
+                                                                        Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <TextBlock Text="{Binding GameName}"
-                                                       Margin="4,0,0,0"
-                                                       Foreground="{DynamicResource TextBrush}"
-                                                       Cursor="Hand"
-                                                       MouseLeftButtonUp="GameName_Click">
+                                            <TextBlock Text=" "
+                                                Foreground="{DynamicResource TextBrush}"
+                                                Opacity="0.6">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility"
-                                                                Value="Collapsed" />
+                                                        <Setter Property="Visibility" Value="Visible" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding ShowGameName}"
-                                                                         Value="True">
-                                                                <Setter Property="Visibility"
-                                                                        Value="Visible" />
+                                                            <DataTrigger Binding="{Binding ShowGameName, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
+                                                                        Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                                <!-- "in" -->
+                                            <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Feed_Header_In}"
+                                                    Foreground="{DynamicResource TextBrush}"
+                                                    Opacity="0.6">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ShowGameName}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+
+                                            <TextBlock Text="{Binding GameName}"
+                                                    Margin="4,0,0,0"
+                                                    Foreground="{DynamicResource TextBrush}"
+                                                    Cursor="Hand"
+                                                    MouseLeftButtonUp="GameName_Click">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ShowGameName}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GameName}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding GameName}" Value="">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
                                         </StackPanel>
-
-                                        <!-- Date under the header -->
                                         <TextBlock Text="{Binding SubheaderText}"
                                                    Foreground="{DynamicResource TextBrush}"
                                                    Opacity="0.6"
@@ -339,41 +391,35 @@
                                     </StackPanel>
                                 </StackPanel>
 
-                                <!-- Inner list: achievements, does NOT steal scroll -->
                                 <ItemsControl ItemsSource="{Binding Achievements}"
-                                                Margin="0,4,0,0">
+                                              Margin="0,4,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <!-- Row root: hover + cursor on the BORDER, layout inside -->
                                             <Border Margin="0,1,0,1"
-                                                Padding="3"
-                                                CornerRadius="3"
-                                                BorderBrush="{DynamicResource NormalBorderBrush}"
-                                                BorderThickness="0">
+                                                    Padding="3"
+                                                    CornerRadius="3"
+                                                    BorderBrush="{DynamicResource NormalBorderBrush}"
+                                                    BorderThickness="0"
+                                                    MouseLeftButtonUp="AchievementItem_Click">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
                                                         <Setter Property="Background" Value="Transparent" />
                                                         <Setter Property="Cursor" Value="Arrow" />
+
                                                         <Style.Triggers>
-                                                            <!-- Hover highlight to mimic selection -->
+                                                            <!-- Always highlight on hover (regardless of settings) -->
                                                             <Trigger Property="IsMouseOver" Value="True">
                                                                 <Setter Property="Background" Value="#33FFFFFF" />
                                                             </Trigger>
 
-                                                            <DataTrigger Binding="{Binding HideDescription}"
-                                                                            Value="True">
+                                                            <DataTrigger Binding="{Binding CanReveal}" Value="True">
                                                                 <Setter Property="Cursor" Value="Hand" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
                                                 </Border.Style>
 
-                                                <!-- Actual content grid: handles the click -->
-                                                <Grid MouseLeftButtonUp="AchievementItem_Click">
-                                                    <!-- 3-column grid:
-                                                        [0] padlock column (avatar-width, aligned under avatar)
-                                                        [1] icon
-                                                        [2] text -->
+                                                <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="{Binding DataContext.FriendAvatarSize,
                                                                                         RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}" />
@@ -381,154 +427,118 @@
                                                         <ColumnDefinition Width="*" />
                                                     </Grid.ColumnDefinitions>
 
-                                                    <!-- Padlock aligned under avatar, visible whenever HideDescription is true -->
+                                                    <!-- Lock only when revealable and not revealed -->
                                                     <TextBlock Grid.Column="0"
-                                                               Text="🔒"
-                                                               VerticalAlignment="Center"
-                                                               HorizontalAlignment="Center"
-                                                               Foreground="{DynamicResource TextBrush}"
-                                                               Opacity="0.85">
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Visibility" Value="Hidden" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HideDescription}"
-                                                                                 Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
-                                                    </TextBlock>
+                                                        Text="🔒"
+                                                        VerticalAlignment="Center"
+                                                        HorizontalAlignment="Center"
+                                                        Foreground="{DynamicResource TextBrush}"
+                                                        Opacity="0.85">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Hidden" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding CanReveal}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
 
-                                                    <!-- Achievement icon -->
-                                                    <Grid Grid.Column="1"
-                                                          Width="{Binding DataContext.AchievementIconSize, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
-                                                          Height="{Binding DataContext.AchievementIconSize, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
-                                                          Margin="8,0,8,0"
-                                                          VerticalAlignment="Center">
-                                                        <!-- Locked/hidden icon (visible when not revealed) -->
-                                                        <Image Source="{Binding AchievementIconUrl}"
-                                                               Stretch="Uniform"
-                                                               VerticalAlignment="Center">
-                                                            <Image.Style>
-                                                                <Style TargetType="Image">
-                                                                    <Setter Property="Opacity" Value="1" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsRevealed}" Value="True">
-                                                                            <Setter Property="Opacity" Value="0" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Image.Style>
-                                                        </Image>
+                                                <Grid Grid.Column="1"
+                                                    Width="{Binding DataContext.AchievementIconSize, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
+                                                    Height="{Binding DataContext.AchievementIconSize, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
+                                                    Margin="8,0,8,0"
+                                                    VerticalAlignment="Center">
 
-                                                        <!-- Unlocked icon (visible when revealed) -->
-                                                        <Image Source="{Binding AchievementIconUnlockedUrl}"
-                                                               Stretch="Uniform"
-                                                               VerticalAlignment="Center">
-                                                            <Image.Style>
-                                                                <Style TargetType="Image">
-                                                                    <Setter Property="Opacity" Value="0" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsRevealed}" Value="True">
-                                                                            <Setter Property="Opacity" Value="1" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Image.Style>
-                                                        </Image>
-                                                    </Grid>
+                                                    <ToggleButton IsChecked="{Binding IsRevealed, Mode=TwoWay}"
+                                                            IsHitTestVisible="False"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            Padding="0"
+                                                            Focusable="False">
+                                                        <Image Stretch="Uniform"
+                                                            VerticalAlignment="Center"
+                                                            Source="{Binding DisplayIcon}" />
+                                                    </ToggleButton>
+                                                </Grid>
 
-                                                    <!-- Text + times -->
+
                                                     <StackPanel Grid.Column="2">
                                                         <TextBlock Text="{Binding AchievementDisplayName}"
                                                                    FontWeight="Bold"
                                                                    Foreground="{DynamicResource TextBrush}"
                                                                    TextWrapping="Wrap" />
 
-                                                        <TextBlock Text="{Binding AchievementDescription}"
-                                                                   Foreground="{DynamicResource TextBrush}"
-                                                                   Opacity="0.8"
-                                                                   FontSize="12"
-                                                                   TextWrapping="Wrap"
-                                                                   Margin="0,2,0,0">
+                                                        <!-- Description:
+                                                             - visible if user unlocked (UserUnlockTime != null)
+                                                             - hidden only when revealable and not revealed -->
+                                                       <TextBlock Text="{Binding AchievementDescription}"
+                                                            Foreground="{DynamicResource TextBrush}"
+                                                            FontSize="12"
+                                                            TextWrapping="Wrap"
+                                                            Margin="0,2,0,0"
+                                                            MinHeight="16">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
-                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                    <Setter Property="Opacity" Value="0.8" />
+
                                                                     <Style.Triggers>
+                                                                        <!-- Hide text (keep layout) only when setting ON, user locked, and not revealed -->
                                                                         <MultiDataTrigger>
                                                                             <MultiDataTrigger.Conditions>
-                                                                                <Condition Binding="{Binding HideDescription}"
-                                                                                           Value="True" />
-                                                                                <Condition Binding="{Binding IsRevealed}"
-                                                                                           Value="False" />
+                                                                                <Condition Binding="{Binding CanReveal}" Value="True" />
+                                                                                <Condition Binding="{Binding IsRevealed}" Value="False" />
                                                                             </MultiDataTrigger.Conditions>
-                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                            <Setter Property="Opacity" Value="0" />
                                                                         </MultiDataTrigger>
                                                                     </Style.Triggers>
                                                                 </Style>
                                                             </TextBlock.Style>
                                                         </TextBlock>
-
-                                                        <!-- Placeholder when description is hidden and not revealed -->
-                                                        <TextBlock Text=""
-                                                                   Foreground="{DynamicResource TextBrush}"
-                                                                   Opacity="0.6"
-                                                                   FontSize="12"
-                                                                   TextWrapping="Wrap"
-                                                                   Margin="0,2,0,0">
-                                                            <TextBlock.Style>
-                                                                <Style TargetType="TextBlock">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <MultiDataTrigger>
-                                                                            <MultiDataTrigger.Conditions>
-                                                                                <Condition Binding="{Binding HideDescription}"
-                                                                                           Value="True" />
-                                                                                <Condition Binding="{Binding IsRevealed}"
-                                                                                           Value="False" />
-                                                                            </MultiDataTrigger.Conditions>
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </MultiDataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </TextBlock.Style>
-                                                        </TextBlock>
-
-                                                        <TextBlock Text="{Binding UnlockTime,
+                                                        <TextBlock Text="{Binding FriendUnlockTime,
                                                                                 Converter={StaticResource UtcToLocalConverter},
                                                                                 StringFormat={}{0:t}}"
-                                                                Foreground="{DynamicResource TextBrush}"
-                                                                Opacity="0.6"
-                                                                FontSize="11"
-                                                                Margin="0,2,0,0" />
+                                                                 Foreground="{DynamicResource TextBrush}"
+                                                                 Opacity="0.6"
+                                                                 FontSize="11"
+                                                                 Margin="0,2,0,0" />
 
                                                         <TextBlock Foreground="{DynamicResource TextBrush}"
-                                                                   Opacity="0.6"
-                                                                   FontSize="11"
-                                                                   Margin="0,2,0,0">
-                                                            <TextBlock.Style>
-                                                                <Style TargetType="TextBlock">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                    <Style.Triggers>
-                                                                        <!-- Hide when setting disabled -->
-                                                                        <DataTrigger Binding="{Binding DataContext.ShowMyUnlockTime, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}" Value="False">
-                                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                                        </DataTrigger>
-                                                                        <!-- Hide when there is no unlock time for this entry -->
-                                                                        <DataTrigger Binding="{Binding MyUnlockTime}" Value="{x:Null}">
-                                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </TextBlock.Style>
-                                                            <TextBlock.Inlines>
-                                                                <Run Text="{DynamicResource LOCFriendsAchFeed_Feed_Label_MyUnlockTime}" />
-                                                                <Run Text=" " />
-                                                                <Run Text="{Binding MyUnlockTime, Converter={StaticResource UtcToLocalConverter}, StringFormat={}{0:g}}" />
-                                                            </TextBlock.Inlines>
-                                                        </TextBlock>
+                                                                    Opacity="0.6"
+                                                                    FontSize="11"
+                                                                    Margin="0,2,0,0">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <!-- default: hidden -->
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+
+                                                                        <Style.Triggers>
+                                                                            <!-- Show if setting enabled -->
+                                                                            <DataTrigger Value="True"
+                                                                                        Binding="{Binding RelativeSource={RelativeSource AncestorType={x:Type local:FeedViewControl}},
+                                                                                                        Path=DataContext.ShowSelfUnlockTime}">
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                            </DataTrigger>
+
+                                                                            <!-- But hide if no user unlock time -->
+                                                                            <DataTrigger Binding="{Binding SelfUnlockTime}" Value="{x:Null}">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                            </DataTrigger>
+
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+
+                                                                <TextBlock.Inlines>
+                                                                    <Run Text="{DynamicResource LOCFriendsAchFeed_Feed_Label_SelfUnlockTime}" />
+                                                                    <Run Text=" " />
+                                                                    <Run Text="{Binding SelfUnlockTime,
+                                                                                        Converter={StaticResource UtcToLocalConverter},
+                                                                                        StringFormat={}{0:g}}" />
+                                                                </TextBlock.Inlines>
+                                                            </TextBlock>
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>

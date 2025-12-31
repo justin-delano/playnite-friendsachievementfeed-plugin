@@ -9,400 +9,176 @@ using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Services
 {
-    public class CachedAchievementData
+    // New format: stored per Playnite game file (Guid filename), containing SteamID64s.
+    public class FamilySharingScanResult
     {
-        public DateTime LastUpdated { get; set; }
-        public List<FeedEntry> Entries { get; set; } = new List<FeedEntry>();
+        public DateTime LastUpdatedUtc { get; set; }
+        public List<string> SteamIds { get; set; } = new List<string>();
     }
 
-    public class FriendPlaytimeCacheData
+    public sealed class CacheService : ICacheService
     {
-        public DateTime LastUpdatedUtc { get; set; } = DateTime.MinValue;
-
-        // friendSteamId -> (appId -> playtimeMinutes)
-        public Dictionary<string, Dictionary<int, int>> FriendAppPlaytimeMinutes { get; set; }
-            = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    public class ForcedScanStateData
-    {
-        public DateTime LastUpdatedUtc { get; set; } = DateTime.MinValue;
-
-        // friendSteamId -> (appId -> lastScanUtc)
-        public Dictionary<string, Dictionary<int, DateTime>> LastScanUtcByFriendApp { get; set; }
-            = new Dictionary<string, Dictionary<int, DateTime>>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    public class CacheService
-    {
-        private readonly IPlayniteAPI _api;
         private readonly ILogger _logger;
-        private readonly FriendsAchievementFeedPlugin _plugin;
+        private readonly string _baseDir;
 
-        private readonly string _cacheDirPath;
-        private readonly string _globalCachePath;
+        // Friend feed (global + per-game)
+        private readonly string _friendGlobalPath;   // friend_achievement_cache.json
+        private readonly string _friendPerGameDir;   // friend_achievement_cache/*.json
 
-        private readonly string _friendPlaytimeCachePath;
-        private FriendPlaytimeCacheData _friendPlaytimeCache;
+        // Self achievements
+        private readonly string _selfCacheRootDir;
 
-        private readonly string _forcedScanStatePath;
-        private ForcedScanStateData _forcedScanState;
+        // Family sharing
+        private readonly string _familySharingDir;
 
-        private Dictionary<string, CachedAchievementData> _cachePerGame;
-        private CachedAchievementData _globalCache;
+        private readonly object _sync = new object();
 
-        private readonly object _cacheLock = new object();
+        // In-memory state
+        private FeedData _globalFriendFeed;
+        private Dictionary<string, FeedData> _perGameFeed =
+            new Dictionary<string, FeedData>(StringComparer.OrdinalIgnoreCase);
+
+
+        // key = "{playniteGameId}" OR "app:{appId}"
+        private Dictionary<string, SelfAchievementGameData> _selfAchievements =
+            new Dictionary<string, SelfAchievementGameData>(StringComparer.OrdinalIgnoreCase);
+
+        // playniteGameId -> steamId64s
+        private Dictionary<string, List<string>> _familySharing =
+            new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        private bool _familySharingLoaded;
 
         public event EventHandler CacheChanged;
 
-        private void OnCacheChanged()
-        {
-            try
-            {
-                CacheChanged?.Invoke(this, EventArgs.Empty);
-            }
-            catch (Exception e)
-            {
-                _logger?.Error(e, string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_NotifySubscribers")));
-            }
-        }
-
         public CacheService(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin)
         {
-            _api = api;
             _logger = logger;
-            _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
+            if (plugin == null) throw new ArgumentNullException(nameof(plugin));
 
-            var baseDir = _plugin.GetPluginUserDataPath();
-            if (!Directory.Exists(baseDir))
-            {
-                Directory.CreateDirectory(baseDir);
-            }
+            _baseDir = plugin.GetPluginUserDataPath();
+            EnsureDir(_baseDir);
 
-            _cacheDirPath = Path.Combine(baseDir, "achievement_cache");
-            if (!Directory.Exists(_cacheDirPath))
-            {
-                Directory.CreateDirectory(_cacheDirPath);
-            }
+            _friendPerGameDir = Path.Combine(_baseDir, "friend_achievement_cache");
+            EnsureDir(_friendPerGameDir);
 
-            _globalCachePath = Path.Combine(baseDir, "achievement_cache.json");
+            _friendGlobalPath = Path.Combine(_baseDir, "friend_achievement_cache.json");
 
-            _friendPlaytimeCachePath = Path.Combine(baseDir, "friend_playtime_cache.json");
-            _forcedScanStatePath = Path.Combine(baseDir, "forced_scan_state.json");
+            _selfCacheRootDir = Path.Combine(_baseDir, "self_achievement_cache");
+            EnsureDir(_selfCacheRootDir);
 
-            _cachePerGame = new Dictionary<string, CachedAchievementData>(StringComparer.OrdinalIgnoreCase);
+            _familySharingDir = Path.Combine(_baseDir, "family_sharing");
+            // Optional; created on write.
         }
 
         // ---------------------------
-        // JSON helpers (atomic)
+        // Atomic JSON
         // ---------------------------
 
-        private static DataContractJsonSerializer CreateJsonSerializer<T>()
+        private static class AtomicJson
         {
-            return new DataContractJsonSerializer(typeof(T),
-                new DataContractJsonSerializerSettings
-                {
-                    UseSimpleDictionaryFormat = true
-                });
-        }
+            private static DataContractJsonSerializer Create<T>()
+                => new DataContractJsonSerializer(typeof(T),
+                    new DataContractJsonSerializerSettings { UseSimpleDictionaryFormat = true });
 
-        private static T ReadJsonFile<T>(string path) where T : class
-        {
-            try
+            public static T Read<T>(string path) where T : class
             {
-                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
-
-                using (var stream = File.OpenRead(path))
+                try
                 {
-                    var serializer = CreateJsonSerializer<T>();
-                    return serializer.ReadObject(stream) as T;
-                }
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static void WriteJsonFileAtomic<T>(string path, T data)
-        {
-            if (string.IsNullOrWhiteSpace(path)) return;
-
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
-            var tmp = path + ".tmp";
-
-            try
-            {
-                var serializer = CreateJsonSerializer<T>();
-
-                using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    serializer.WriteObject(stream, data);
-                }
-
-                if (File.Exists(path))
-                {
-                    try
+                    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+                    using (var s = File.OpenRead(path))
                     {
-                        // Best atomic replace on Windows
-                        File.Replace(tmp, path, destinationBackupFileName: null);
-                        return;
+                        return Create<T>().ReadObject(s) as T;
                     }
-                    catch
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            public static void WriteAtomic<T>(string path, T data)
+            {
+                if (string.IsNullOrWhiteSpace(path)) return;
+
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                var tmp = path + ".tmp";
+                try
+                {
+                    using (var s = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        // Fall back below
+                        Create<T>().WriteObject(s, data);
                     }
 
-                    try { File.Delete(path); } catch { }
-                }
+                    if (File.Exists(path))
+                    {
+                        try
+                        {
+                            File.Replace(tmp, path, destinationBackupFileName: null);
+                            return;
+                        }
+                        catch
+                        {
+                            File.Delete(path);
+                        }
+                    }
 
-                File.Move(tmp, path);
-            }
-            finally
-            {
-                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                    File.Move(tmp, path);
+                }
+                finally
+                {
+                    if (File.Exists(tmp)) File.Delete(tmp);
+                }
             }
         }
 
-        private static DateTime AsUtcKind(DateTime dt)
+        private static void EnsureDir(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) return;
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        }
+
+        private static DateTime AsUtc(DateTime dt)
         {
             if (dt.Kind == DateTimeKind.Utc) return dt;
             if (dt.Kind == DateTimeKind.Local) return dt.ToUniversalTime();
             return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
         }
 
-        // ---------------------------
-        // Friend playtime cache
-        // ---------------------------
-
-        private static FriendPlaytimeCacheData NormalizeFriendPlaytimeCache(FriendPlaytimeCacheData raw)
+        private void RaiseCacheChangedSafe()
         {
-            raw ??= new FriendPlaytimeCacheData();
-
-            var normalized = new FriendPlaytimeCacheData
+            try { CacheChanged?.Invoke(this, EventArgs.Empty); }
+            catch (Exception e)
             {
-                LastUpdatedUtc = AsUtcKind(raw.LastUpdatedUtc),
-                FriendAppPlaytimeMinutes = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase)
-            };
-
-            if (raw.FriendAppPlaytimeMinutes != null)
-            {
-                foreach (var kv in raw.FriendAppPlaytimeMinutes)
-                {
-                    if (string.IsNullOrWhiteSpace(kv.Key)) continue;
-
-                    normalized.FriendAppPlaytimeMinutes[kv.Key] =
-                        kv.Value != null ? new Dictionary<int, int>(kv.Value) : new Dictionary<int, int>();
-                }
-            }
-
-            return normalized;
-        }
-
-        public Dictionary<string, Dictionary<int, int>> GetFriendPlaytimeCache()
-        {
-            lock (_cacheLock)
-            {
-                if (_friendPlaytimeCache == null)
-                {
-                    _friendPlaytimeCache = NormalizeFriendPlaytimeCache(
-                        ReadJsonFile<FriendPlaytimeCacheData>(_friendPlaytimeCachePath));
-                }
-
-                // Defensive copy (callers shouldn't mutate internal instance)
-                var copy = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
-                foreach (var fk in _friendPlaytimeCache.FriendAppPlaytimeMinutes)
-                {
-                    copy[fk.Key] = fk.Value != null
-                        ? new Dictionary<int, int>(fk.Value)
-                        : new Dictionary<int, int>();
-                }
-                return copy;
+                _logger?.Error(e, ResourceProvider.GetString("LOCFriendsAchFeed_Error_NotifySubscribers"));
             }
         }
 
-        public void UpdateFriendPlaytimeCache(Dictionary<string, Dictionary<int, int>> snapshot)
+        private void ClearAllMemory_NoEvent()
         {
-            lock (_cacheLock)
-            {
-                var normalized = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
-                if (snapshot != null)
-                {
-                    foreach (var kv in snapshot)
-                    {
-                        if (string.IsNullOrWhiteSpace(kv.Key)) continue;
+            _globalFriendFeed = null;
+            _perGameFeed = new Dictionary<string, FeedData>(StringComparer.OrdinalIgnoreCase);
 
-                        normalized[kv.Key] = kv.Value != null
-                            ? new Dictionary<int, int>(kv.Value)
-                            : new Dictionary<int, int>();
-                    }
-                }
+            _selfAchievements = new Dictionary<string, SelfAchievementGameData>(StringComparer.OrdinalIgnoreCase);
 
-                _friendPlaytimeCache = new FriendPlaytimeCacheData
-                {
-                    LastUpdatedUtc = DateTime.UtcNow,
-                    FriendAppPlaytimeMinutes = normalized
-                };
-
-                WriteJsonFileAtomic(_friendPlaytimeCachePath, _friendPlaytimeCache);
-            }
+            _familySharing = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            _familySharingLoaded = false;
         }
 
         // ---------------------------
-        // Forced scan state (due gate)
+        // Disk presence policy
         // ---------------------------
 
-        private static ForcedScanStateData NormalizeForcedScanState(ForcedScanStateData raw)
-        {
-            raw ??= new ForcedScanStateData();
-
-            var normalized = new ForcedScanStateData
-            {
-                LastUpdatedUtc = AsUtcKind(raw.LastUpdatedUtc),
-                LastScanUtcByFriendApp = new Dictionary<string, Dictionary<int, DateTime>>(StringComparer.OrdinalIgnoreCase)
-            };
-
-            if (raw.LastScanUtcByFriendApp != null)
-            {
-                foreach (var fk in raw.LastScanUtcByFriendApp)
-                {
-                    if (string.IsNullOrWhiteSpace(fk.Key)) continue;
-
-                    var inner = new Dictionary<int, DateTime>();
-                    if (fk.Value != null)
-                    {
-                        foreach (var ak in fk.Value)
-                        {
-                            if (ak.Key <= 0) continue;
-                            inner[ak.Key] = AsUtcKind(ak.Value);
-                        }
-                    }
-
-                    normalized.LastScanUtcByFriendApp[fk.Key] = inner;
-                }
-            }
-
-            return normalized;
-        }
-
-        private void LoadForcedScanStateIfNeeded()
-        {
-            if (_forcedScanState != null) return;
-
-            _forcedScanState = NormalizeForcedScanState(
-                ReadJsonFile<ForcedScanStateData>(_forcedScanStatePath));
-        }
-
-        private void SaveForcedScanState()
-        {
-            if (_forcedScanState == null) return;
-            WriteJsonFileAtomic(_forcedScanStatePath, _forcedScanState);
-        }
-
-        public bool IsForcedScanDue(string friendSteamId, int appId, TimeSpan interval, out DateTime lastScanUtc)
-        {
-            lastScanUtc = DateTime.MinValue;
-            if (string.IsNullOrWhiteSpace(friendSteamId) || appId <= 0) return true;
-
-            lock (_cacheLock)
-            {
-                LoadForcedScanStateIfNeeded();
-
-                if (_forcedScanState.LastScanUtcByFriendApp.TryGetValue(friendSteamId, out var map) &&
-                    map != null &&
-                    map.TryGetValue(appId, out var dt))
-                {
-                    lastScanUtc = AsUtcKind(dt);
-                    return (DateTime.UtcNow - lastScanUtc) >= interval;
-                }
-
-                return true;
-            }
-        }
-
-        public void MarkForcedScanAttempt(string friendSteamId, int appId)
-        {
-            if (string.IsNullOrWhiteSpace(friendSteamId) || appId <= 0) return;
-
-            lock (_cacheLock)
-            {
-                LoadForcedScanStateIfNeeded();
-
-                if (!_forcedScanState.LastScanUtcByFriendApp.TryGetValue(friendSteamId, out var map) || map == null)
-                {
-                    map = new Dictionary<int, DateTime>();
-                    _forcedScanState.LastScanUtcByFriendApp[friendSteamId] = map;
-                }
-
-                map[appId] = DateTime.UtcNow;
-                _forcedScanState.LastUpdatedUtc = DateTime.UtcNow;
-
-                SaveForcedScanState();
-            }
-        }
-
-        // ---------------------------
-        // Achievements cache
-        // ---------------------------
-
-        public bool IsCacheValid()
-        {
-            lock (_cacheLock)
-            {
-                if (!CacheFileExists())
-                {
-                    _logger?.Debug(ResourceProvider.GetString("Debug_NoCacheFile"));
-                    _cachePerGame = new Dictionary<string, CachedAchievementData>(StringComparer.OrdinalIgnoreCase);
-                    _globalCache = null;
-                    return false;
-                }
-
-                if (_globalCache == null)
-                {
-                    LoadCache();
-                }
-
-                return _globalCache?.Entries != null && _globalCache.Entries.Any();
-            }
-        }
-
-        public DateTime? GetCacheLastUpdated()
-        {
-            lock (_cacheLock)
-            {
-                if (_globalCache == null || !CacheFileExists())
-                {
-                    LoadCache();
-                }
-
-                return _globalCache?.LastUpdated;
-            }
-        }
-
-        public bool CacheFileExists()
+        private bool CoreArtifactsPresent()
         {
             try
             {
-                // Global cache is primary
-                if (File.Exists(_globalCachePath))
-                {
-                    return true;
-                }
-
-                // Resilience: if global missing but per-game exists, still treat as cache
-                if (!string.IsNullOrEmpty(_cacheDirPath) &&
-                    Directory.Exists(_cacheDirPath) &&
-                    Directory.EnumerateFiles(_cacheDirPath, "*.json").Any())
-                {
-                    return true;
-                }
-
-                return false;
+                return File.Exists(_friendGlobalPath);
             }
             catch
             {
@@ -410,294 +186,459 @@ namespace FriendsAchievementFeed.Services
             }
         }
 
-        public List<FeedEntry> GetCachedEntries()
+        private bool EnsureMemoryMatchesDisk_Locked()
         {
-            lock (_cacheLock)
+            if (!CoreArtifactsPresent())
             {
-                if (_globalCache == null || !CacheFileExists())
+                ClearAllMemory_NoEvent();
+                return true;
+            }
+
+            // Soft optional folders
+            if (string.IsNullOrEmpty(_familySharingDir) || !Directory.Exists(_familySharingDir))
+            {
+                _familySharing = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                _familySharingLoaded = true;
+            }
+
+            if (string.IsNullOrEmpty(_selfCacheRootDir) || !Directory.Exists(_selfCacheRootDir))
+            {
+                EnsureDir(_selfCacheRootDir);
+                _selfAchievements = new Dictionary<string, SelfAchievementGameData>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (string.IsNullOrEmpty(_friendPerGameDir) || !Directory.Exists(_friendPerGameDir))
+            {
+                EnsureDir(_friendPerGameDir);
+                _perGameFeed = new Dictionary<string, FeedData>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            return false;
+        }
+
+        public void EnsureDiskCacheOrClearMemory()
+        {
+            bool clearedAll;
+            lock (_sync)
+            {
+                clearedAll = EnsureMemoryMatchesDisk_Locked();
+            }
+            if (clearedAll) RaiseCacheChangedSafe();
+        }
+
+        public bool CacheFileExists() => CoreArtifactsPresent();
+
+
+        // ---------------------------
+        // Friend feed (global + per-game)
+        // ---------------------------
+
+        private static string PerGameKey(FeedEntry e)
+        {
+            if (e == null) return string.Empty;
+            if (e.PlayniteGameId.HasValue) return e.PlayniteGameId.Value.ToString();
+            if (e.AppId > 0) return "app_" + e.AppId;
+            return "unknown";
+        }
+
+        private static Dictionary<string, FeedData> BuildPerGameIndex(IEnumerable<FeedEntry> entries, DateTime lastUpdatedUtc)
+        {
+            return (entries ?? Enumerable.Empty<FeedEntry>())
+                .Where(e => e != null)
+                .GroupBy(PerGameKey, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => new FeedData
+                    {
+                        LastUpdatedUtc = lastUpdatedUtc,
+                        Entries = g.OrderByDescending(x => x.FriendUnlockTimeUtc).ToList()
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+        }
+
+        private void EnsureFriendFeedLoaded_NoPolicy()
+        {
+            if (_globalFriendFeed != null) return;
+
+            if (!File.Exists(_friendGlobalPath))
+            {
+                _globalFriendFeed = null;
+                _perGameFeed = new Dictionary<string, FeedData>(StringComparer.OrdinalIgnoreCase);
+                return;
+            }
+
+            var global = AtomicJson.Read<FeedData>(_friendGlobalPath) ?? new FeedData();
+            global.LastUpdatedUtc = AsUtc(global.LastUpdatedUtc);
+            global.Entries ??= new List<FeedEntry>();
+
+            _globalFriendFeed = global;
+            _perGameFeed = BuildPerGameIndex(_globalFriendFeed.Entries, _globalFriendFeed.LastUpdatedUtc);
+
+            TrySyncPerGameFilesToMatchGlobal_NoPolicy();
+        }
+
+        private void TrySyncPerGameFilesToMatchGlobal_NoPolicy()
+        {
+            try
+            {
+                if (_globalFriendFeed == null) return;
+
+                EnsureDir(_friendPerGameDir);
+
+                var expected = BuildPerGameIndex(_globalFriendFeed.Entries, _globalFriendFeed.LastUpdatedUtc);
+
+                var existingFiles = new HashSet<string>(
+                    Directory.Exists(_friendPerGameDir)
+                        ? Directory.EnumerateFiles(_friendPerGameDir, "*.json")
+                        : Enumerable.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+
+                var writtenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var kv in expected)
                 {
-                    LoadCache();
+                    var path = Path.Combine(_friendPerGameDir, kv.Key + ".json");
+                    AtomicJson.WriteAtomic(path, kv.Value);
+                    writtenFiles.Add(path);
                 }
 
-                return _globalCache?.Entries?.OrderByDescending(e => e.UnlockTime).ToList()
-                    ?? new List<FeedEntry>();
+                foreach (var stale in existingFiles.Except(writtenFiles))
+                {
+                    File.Delete(stale);
+                }
+
+                _perGameFeed = expected;
+            }
+            catch (Exception e)
+            {
+                _logger?.Error(e, ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed"));
             }
         }
 
-        public List<FeedEntry> GetRecentEntries(int count = 50)
+        private void SaveFriendFeedToDisk_NoPolicy()
         {
-            return GetCachedEntries().Take(count).ToList();
+            EnsureDir(_friendPerGameDir);
+
+            _globalFriendFeed ??= new FeedData
+            {
+                LastUpdatedUtc = DateTime.UtcNow,
+                Entries = new List<FeedEntry>()
+            };
+
+            _globalFriendFeed.LastUpdatedUtc = AsUtc(_globalFriendFeed.LastUpdatedUtc);
+            _globalFriendFeed.Entries ??= new List<FeedEntry>();
+
+            AtomicJson.WriteAtomic(_friendGlobalPath, _globalFriendFeed);
+
+            _perGameFeed = BuildPerGameIndex(_globalFriendFeed.Entries, _globalFriendFeed.LastUpdatedUtc);
+            TrySyncPerGameFilesToMatchGlobal_NoPolicy();
         }
 
-        public void UpdateCache(List<FeedEntry> entries)
+        public bool IsCacheValid()
         {
-            lock (_cacheLock)
+            lock (_sync)
             {
-                _globalCache = new CachedAchievementData
+                EnsureMemoryMatchesDisk_Locked();
+                if (!CacheFileExists()) return false;
+
+                EnsureFriendFeedLoaded_NoPolicy();
+                return _globalFriendFeed?.Entries != null && _globalFriendFeed.Entries.Any();
+            }
+        }
+
+        public DateTime? GetFriendFeedLastUpdatedUtc()
+        {
+            lock (_sync)
+            {
+                EnsureMemoryMatchesDisk_Locked();
+                if (!CacheFileExists()) return null;
+
+                EnsureFriendFeedLoaded_NoPolicy();
+                return _globalFriendFeed?.LastUpdatedUtc;
+            }
+        }
+
+        public List<FeedEntry> GetCachedFriendEntries()
+        {
+            lock (_sync)
+            {
+                EnsureMemoryMatchesDisk_Locked();
+                if (!CacheFileExists()) return new List<FeedEntry>();
+
+                EnsureFriendFeedLoaded_NoPolicy();
+
+                return _globalFriendFeed?.Entries?
+                           .OrderByDescending(e => e.FriendUnlockTimeUtc)
+                           .ToList()
+                       ?? new List<FeedEntry>();
+            }
+        }
+
+        public List<FeedEntry> GetRecentFriendEntries(int count = 50)
+        {
+            return GetCachedFriendEntries().Take(count).ToList();
+        }
+
+        public void UpdateFriendFeed(List<FeedEntry> entries)
+        {
+            lock (_sync)
+            {
+                _globalFriendFeed = new FeedData
                 {
-                    LastUpdated = DateTime.UtcNow,
+                    LastUpdatedUtc = DateTime.UtcNow,
                     Entries = (entries ?? new List<FeedEntry>())
-                        .OrderByDescending(e => e.UnlockTime)
+                        .Where(e => e != null)
+                        .OrderByDescending(e => e.FriendUnlockTimeUtc)
                         .ToList()
                 };
 
-                _cachePerGame = (_globalCache.Entries ?? new List<FeedEntry>())
-                    .GroupBy(e => e.PlayniteGameId?.ToString() ?? e.AppId.ToString())
-                    .ToDictionary(g => g.Key, g => new CachedAchievementData
-                    {
-                        LastUpdated = _globalCache.LastUpdated,
-                        Entries = g.OrderByDescending(x => x.UnlockTime).ToList()
-                    }, StringComparer.OrdinalIgnoreCase);
-
-                SaveCache();
+                SaveFriendFeedToDisk_NoPolicy();
             }
 
-            OnCacheChanged();
+            RaiseCacheChangedSafe();
         }
 
-        public void MergeUpdateCache(List<FeedEntry> newEntries)
+        public void MergeUpdateFriendFeed(List<FeedEntry> newEntries)
         {
-            lock (_cacheLock)
+            lock (_sync)
             {
-                if (_globalCache == null)
-                {
-                    LoadCache();
-                }
-
-                var existing = _globalCache?.Entries?.ToList() ?? new List<FeedEntry>();
+                EnsureMemoryMatchesDisk_Locked();
+                EnsureFriendFeedLoaded_NoPolicy();
+                var existing = _globalFriendFeed?.Entries?.ToList() ?? new List<FeedEntry>();
 
                 var combined = existing
                     .Concat(newEntries ?? Enumerable.Empty<FeedEntry>())
                     .Where(e => e != null && !string.IsNullOrWhiteSpace(e.Id))
                     .GroupBy(e => e.Id, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.OrderByDescending(x => x.UnlockTime).First())
-                    .OrderByDescending(e => e.UnlockTime)
+                    .Select(g => g.OrderByDescending(x => x.FriendUnlockTimeUtc).First())
+                    .OrderByDescending(e => e.FriendUnlockTimeUtc)
                     .ToList();
 
-                _globalCache = new CachedAchievementData
+                _globalFriendFeed = new FeedData
                 {
-                    LastUpdated = DateTime.UtcNow,
+                    LastUpdatedUtc = DateTime.UtcNow,
                     Entries = combined
                 };
 
-                _cachePerGame = (_globalCache.Entries ?? new List<FeedEntry>())
-                    .GroupBy(e => e.PlayniteGameId?.ToString() ?? e.AppId.ToString())
-                    .ToDictionary(g => g.Key, g => new CachedAchievementData
-                    {
-                        LastUpdated = _globalCache.LastUpdated,
-                        Entries = g.OrderByDescending(x => x.UnlockTime).ToList()
-                    }, StringComparer.OrdinalIgnoreCase);
-
-                SaveCache();
+                SaveFriendFeedToDisk_NoPolicy();
             }
 
-            OnCacheChanged();
-        }
-
-        private void LoadCache()
-        {
-            try
-            {
-                if (!CacheFileExists())
-                {
-                    _logger?.Debug(ResourceProvider.GetString("Debug_NoCacheFile"));
-                    _cachePerGame = new Dictionary<string, CachedAchievementData>(StringComparer.OrdinalIgnoreCase);
-                    _globalCache = null;
-                    return;
-                }
-
-                _cachePerGame = new Dictionary<string, CachedAchievementData>(StringComparer.OrdinalIgnoreCase);
-
-                // Prefer global file
-                if (File.Exists(_globalCachePath))
-                {
-                    using (var stream = File.OpenRead(_globalCachePath))
-                    {
-                        var serializer = new DataContractJsonSerializer(typeof(CachedAchievementData));
-                        _globalCache = (CachedAchievementData)serializer.ReadObject(stream) ?? new CachedAchievementData();
-                    }
-
-                    _cachePerGame = (_globalCache.Entries ?? new List<FeedEntry>())
-                        .GroupBy(e => e.PlayniteGameId?.ToString() ?? e.AppId.ToString())
-                        .ToDictionary(g => g.Key, g => new CachedAchievementData
-                        {
-                            LastUpdated = _globalCache.LastUpdated,
-                            Entries = g.OrderByDescending(e => e.UnlockTime).ToList()
-                        }, StringComparer.OrdinalIgnoreCase);
-
-                    return;
-                }
-
-                // Resilience: rebuild global from per-game files if needed
-                if (Directory.Exists(_cacheDirPath))
-                {
-                    foreach (var f in Directory.GetFiles(_cacheDirPath, "*.json"))
-                    {
-                        try
-                        {
-                            var fileName = Path.GetFileNameWithoutExtension(f);
-                            using (var stream = File.OpenRead(f))
-                            {
-                                var serializer = new DataContractJsonSerializer(typeof(CachedAchievementData));
-                                var data = (CachedAchievementData)serializer.ReadObject(stream);
-                                _cachePerGame[fileName] = data ?? new CachedAchievementData();
-                            }
-                        }
-                        catch (Exception inner)
-                        {
-                            _logger?.Error(inner, string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed")));
-                        }
-                    }
-
-                    var allEntries = _cachePerGame.Values
-                        .SelectMany(v => v.Entries ?? Enumerable.Empty<FeedEntry>())
-                        .OrderByDescending(e => e.UnlockTime)
-                        .ToList();
-
-                    _globalCache = new CachedAchievementData
-                    {
-                        LastUpdated = _cachePerGame.Values.Select(v => v.LastUpdated).DefaultIfEmpty(DateTime.UtcNow).Max(),
-                        Entries = allEntries
-                    };
-
-                    // Write global so future loads are fast/consistent
-                    SaveCache();
-                    return;
-                }
-
-                _globalCache = null;
-            }
-            catch (Exception e)
-            {
-                _logger?.Error(e, string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed")));
-                _cachePerGame = new Dictionary<string, CachedAchievementData>(StringComparer.OrdinalIgnoreCase);
-                _globalCache = null;
-            }
-        }
-
-        private void SaveCache()
-        {
-            try
-            {
-                if (!Directory.Exists(_cacheDirPath))
-                {
-                    Directory.CreateDirectory(_cacheDirPath);
-                }
-
-                // Write global cache file
-                if (_globalCache == null)
-                {
-                    _globalCache = new CachedAchievementData
-                    {
-                        LastUpdated = DateTime.UtcNow,
-                        Entries = new List<FeedEntry>()
-                    };
-                }
-
-                var serializer = new DataContractJsonSerializer(typeof(CachedAchievementData));
-
-                using (var stream = new FileStream(_globalCachePath, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    serializer.WriteObject(stream, _globalCache);
-                }
-
-                // Derive per-game files from global
-                var perGame = (_globalCache.Entries ?? new List<FeedEntry>())
-                    .GroupBy(e => e.PlayniteGameId?.ToString() ?? e.AppId.ToString())
-                    .ToDictionary(g => g.Key, g => new CachedAchievementData
-                    {
-                        LastUpdated = _globalCache.LastUpdated,
-                        Entries = g.OrderByDescending(e => e.UnlockTime).ToList()
-                    }, StringComparer.OrdinalIgnoreCase);
-
-                var existingFiles = Directory.Exists(_cacheDirPath)
-                    ? new HashSet<string>(Directory.GetFiles(_cacheDirPath, "*.json"), StringComparer.OrdinalIgnoreCase)
-                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                var writtenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var kv in perGame)
-                {
-                    var key = kv.Key;
-                    var data = kv.Value ?? new CachedAchievementData { LastUpdated = DateTime.UtcNow, Entries = new List<FeedEntry>() };
-                    var path = Path.Combine(_cacheDirPath, $"{key}.json");
-
-                    using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
-                    {
-                        serializer.WriteObject(stream, data);
-                    }
-
-                    writtenFiles.Add(path);
-                }
-
-                foreach (var f in existingFiles.Except(writtenFiles))
-                {
-                    try { File.Delete(f); } catch { }
-                }
-
-                var total = perGame?.Values.Sum(v => v?.Entries?.Count ?? 0) ?? 0;
-                _logger?.Debug(string.Format(ResourceProvider.GetString("Debug_CacheSaved"), total, _cacheDirPath));
-            }
-            catch (Exception e)
-            {
-                _logger?.Error(e, string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed")));
-            }
+            RaiseCacheChangedSafe();
         }
 
         public void ClearCache()
         {
-            lock (_cacheLock)
+            lock (_sync)
             {
-                _cachePerGame = new Dictionary<string, CachedAchievementData>(StringComparer.OrdinalIgnoreCase);
-                _globalCache = null;
+                ClearAllMemory_NoEvent();
 
-                try
+                if (File.Exists(_friendGlobalPath)) File.Delete(_friendGlobalPath);
+
+                if (Directory.Exists(_friendPerGameDir))
                 {
-                    if (Directory.Exists(_cacheDirPath))
+                    foreach (var f in Directory.EnumerateFiles(_friendPerGameDir, "*.json"))
                     {
-                        foreach (var f in Directory.GetFiles(_cacheDirPath, "*.json"))
-                        {
-                            try { File.Delete(f); } catch { }
-                        }
-                        _logger?.Debug(ResourceProvider.GetString("Debug_CacheDeleted"));
+                        File.Delete(f);
                     }
                 }
-                catch (Exception e)
+
+                if (Directory.Exists(_selfCacheRootDir))
                 {
-                    _logger?.Error(e, string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed")));
+                    Directory.Delete(_selfCacheRootDir, true);
                 }
 
-                try
+                if (Directory.Exists(_familySharingDir))
                 {
-                    if (File.Exists(_globalCachePath))
-                    {
-                        try { File.Delete(_globalCachePath); } catch { }
-                    }
+                    Directory.Delete(_familySharingDir, true);
                 }
-                catch { }
-
-                try
-                {
-                    if (File.Exists(_friendPlaytimeCachePath))
-                    {
-                        try { File.Delete(_friendPlaytimeCachePath); } catch { }
-                    }
-                    _friendPlaytimeCache = null;
-                }
-                catch { }
-
-                try
-                {
-                    if (File.Exists(_forcedScanStatePath))
-                    {
-                        try { File.Delete(_forcedScanStatePath); } catch { }
-                    }
-                    _forcedScanState = null;
-                }
-                catch { }
             }
 
-            OnCacheChanged();
+            RaiseCacheChangedSafe();
+        }
+
+        // ---------------------------
+        // Family sharing (folder optional)
+        // New layout:
+        //   family_sharing/{playniteGameId}.json  => { SteamIds: [ "steamId64", ... ] }
+        // Perf improvement: skip disk writes if no changes; keep deterministic ordering.
+        // ---------------------------
+
+        private string FamilySharingPath(string playniteGameId) => Path.Combine(_familySharingDir, playniteGameId + ".json");
+
+        private static List<string> NormalizeSteamIds(IEnumerable<string> ids)
+        {
+            return (ids ?? Enumerable.Empty<string>())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void EnsureFamilySharingLoaded_NoPolicy()
+        {
+            if (_familySharingLoaded) return;
+
+            var map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            if (!Directory.Exists(_familySharingDir))
+            {
+                _familySharing = map;
+                _familySharingLoaded = true;
+                return;
+            }
+
+            foreach (var f in Directory.EnumerateFiles(_familySharingDir, "*.json"))
+            {
+                var key = Path.GetFileNameWithoutExtension(f);
+                if (string.IsNullOrWhiteSpace(key)) continue;
+
+                // Only accept GUID-named files (playnite game id).
+                if (!Guid.TryParse(key, out _))
+                    continue;
+
+                var data = AtomicJson.Read<FamilySharingScanResult>(f);
+                if (data?.SteamIds != null && data.SteamIds.Count > 0)
+                {
+                    var normalized = NormalizeSteamIds(data.SteamIds);
+                    if (normalized.Count > 0)
+                        map[key] = normalized;
+                }
+            }
+
+            _familySharing = map;
+            _familySharingLoaded = true;
+        }
+
+        public Dictionary<string, List<string>> LoadAllFamilySharingScanResults()
+        {
+            lock (_sync)
+            {
+                EnsureMemoryMatchesDisk_Locked();
+                EnsureFamilySharingLoaded_NoPolicy();
+
+                var copy = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in _familySharing)
+                    copy[kv.Key] = kv.Value != null ? new List<string>(kv.Value) : new List<string>();
+
+                return copy;
+            }
+        }
+
+        public void MergeAndSaveFamilySharingScanResults(Dictionary<string, IEnumerable<string>> results)
+        {
+            if (results == null || results.Count == 0) return;
+
+            lock (_sync)
+            {
+                EnsureDir(_familySharingDir);
+                EnsureFamilySharingLoaded_NoPolicy();
+
+                foreach (var kv in results)
+                {
+                    var playniteGameId = kv.Key;
+                    if (string.IsNullOrWhiteSpace(playniteGameId)) continue;
+
+                    if (!Guid.TryParse(playniteGameId, out _))
+                        continue;
+
+                    var incoming = NormalizeSteamIds(kv.Value);
+                    if (incoming.Count == 0) continue;
+
+                    _familySharing.TryGetValue(playniteGameId, out var existingList);
+                    existingList ??= new List<string>();
+
+                    // Merge
+                    var mergedSet = new HashSet<string>(existingList, StringComparer.OrdinalIgnoreCase);
+                    foreach (var sid in incoming) mergedSet.Add(sid);
+
+                    var mergedList = mergedSet
+                        .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    // PERF: skip write if unchanged
+                    var unchanged = existingList.Count == mergedList.Count &&
+                                    existingList.All(s => mergedSet.Contains(s));
+                    if (unchanged)
+                    {
+                        _familySharing[playniteGameId] = existingList;
+                        continue;
+                    }
+
+                    AtomicJson.WriteAtomic(FamilySharingPath(playniteGameId), new FamilySharingScanResult
+                    {
+                        LastUpdatedUtc = DateTime.UtcNow,
+                        SteamIds = mergedList
+                    });
+
+                    _familySharing[playniteGameId] = mergedList;
+                }
+            }
+        }
+
+        // ---------------------------
+        // Self achievements
+        // ---------------------------
+
+        private string SelfKey(string key) => key?.Trim() ?? string.Empty;
+        private string SelfPath(string key) => Path.Combine(_selfCacheRootDir, SelfKey(key) + ".json");
+
+        public SelfAchievementGameData LoadSelfAchievementData(string key)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(key)) return null;
+
+                lock (_sync)
+                {
+                    EnsureMemoryMatchesDisk_Locked();
+
+                    var k = SelfKey(key);
+                    if (_selfAchievements.TryGetValue(k, out var cached) && cached != null)
+                        return cached;
+
+                    var path = SelfPath(k);
+                    var disk = AtomicJson.Read<SelfAchievementGameData>(path);
+                    if (disk != null)
+                    {
+                        disk.LastUpdatedUtc = AsUtc(disk.LastUpdatedUtc);
+                        _selfAchievements[k] = disk;
+                    }
+
+                    return disk;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed"));
+                return null;
+            }
+        }
+
+        public void SaveSelfAchievementData(string key, SelfAchievementGameData data)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(key)) return;
+
+                lock (_sync)
+                {
+                    EnsureDir(_selfCacheRootDir);
+
+                    var toWrite = data ?? new SelfAchievementGameData();
+                    toWrite.LastUpdatedUtc = AsUtc(toWrite.LastUpdatedUtc);
+
+                    var k = SelfKey(key);
+                    AtomicJson.WriteAtomic(SelfPath(k), toWrite);
+
+                    _selfAchievements[k] = toWrite;
+                    RaiseCacheChangedSafe();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed"));
+            }
         }
     }
 }

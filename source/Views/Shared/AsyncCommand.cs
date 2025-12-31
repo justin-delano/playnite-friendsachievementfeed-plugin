@@ -54,7 +54,7 @@ namespace FriendsAchievementFeed.Views
                 {
                     app.Dispatcher.BeginInvoke(new Action(() =>
                     {
-                        try { handler.Invoke(this, EventArgs.Empty); } catch { }
+                        handler.Invoke(this, EventArgs.Empty);
                     }));
                 }
                 else

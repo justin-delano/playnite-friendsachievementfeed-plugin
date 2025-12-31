@@ -15,6 +15,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamUserId">Votre SteamID64</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamUserId_Hint">Identifiant Steam au format 64 bits (pas le nom de profil).</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Default">Statut d'auth Steam : inconnu</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Checking">Vérification en cours...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckSteamAuth">Vérifier l'authentification Steam</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">Se réauthentifier (ouvrir le navigateur)</sys:String>
 
@@ -70,6 +71,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Description">Supprime les données de cache des succès du plugin (global et par-jeu).</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_WipeCache_All">Supprimer tout le cache</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Wiped">Cache supprimé.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_WipeFailed">Impossible de supprimer le cache (des fichiers restent).</sys:String>
 
     <!-- Steam auth messages -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_OK">Authentification Steam OK</sys:String>

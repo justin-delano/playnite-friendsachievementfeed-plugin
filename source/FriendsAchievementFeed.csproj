@@ -31,7 +31,9 @@
 		<Reference Include="System.Net.Http" />
 		<Reference Include="System" />
 		<Reference Include="System.Core" />
+		<Reference Include="System.Security" />
 		<Reference Include="mscorlib" />
+		<Reference Include="Microsoft.CSharp" />
 	</ItemGroup>
 
 
@@ -47,6 +49,14 @@
 		<None Include="Localization\en_US.xaml">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+	</ItemGroup>
+	<ItemGroup>
+		<!-- Keep as WPF Resource so pack:// URIs work when loaded inside Playnite -->
+		<Resource Include="Resources\HiddenAchIcon.png" />
+		<!-- Also copy to output for running from the build folder during local testing -->
+		<Content Include="Resources\HiddenAchIcon.png">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</Content>
 	</ItemGroup>
 	<PropertyGroup>
 		<PostBuildEvent>xcopy "$(ProjectDir)Localization\*.xaml" "$(TargetDir)\Localization" /Y /I /E</PostBuildEvent>

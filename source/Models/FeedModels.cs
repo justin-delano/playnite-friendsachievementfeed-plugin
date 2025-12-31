@@ -1,13 +1,33 @@
-using Playnite.SDK;
-using Playnite.SDK.Plugins;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using Common;
+using Playnite.SDK.Data;
 namespace FriendsAchievementFeed.Models
 {
     public class FeedEntry : ObservableObjectPlus
     {
+        // Default user achievement icon: prefer copied output file, fall back to compiled pack URI
+        private static string DefaultSelfAchIconPackUri
+        {
+            get
+            {
+                try
+                {
+                    var outPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "HiddenAchIcon.png");
+                    if (System.IO.File.Exists(outPath))
+                    {
+                        return new Uri(outPath).AbsoluteUri; // file:/// URI
+                    }
+                }
+                catch
+                {
+                    // ignore and fall back to pack URI
+                }
+
+                return "pack://application:,,,/FriendsAchievementFeed;component/Resources/HiddenAchIcon.png";
+            }
+        }
+
         public string Id { get; set; }
 
         public string FriendSteamId { get; set; }
@@ -22,106 +42,157 @@ namespace FriendsAchievementFeed.Models
         public string AchievementDisplayName { get; set; }
         public string AchievementDescription { get; set; }
 
-        private string _achievementIconUrl;
-        public string AchievementIconUrl
+        // pushed in by FeedControlLogic for each cloned entry
+        private bool _hideAchievementsLockedForSelf;
+        public bool HideAchievementsLockedForSelf
         {
-            get => _achievementIconUrl;
-            set => SetValue(ref _achievementIconUrl, value);
-        }
-
-        private string _achievementIconUnlockedUrl;
-        public string AchievementIconUnlockedUrl
-        {
-            get => _achievementIconUnlockedUrl;
-            set => SetValue(ref _achievementIconUnlockedUrl, value);
-        }
-
-        private bool _hideDescription;
-        public bool HideDescription
-        {
-            get => _hideDescription;
-            set => SetValue(ref _hideDescription, value);
-        }
-
-        //  Treat this as UTC internally
-        private DateTime? _myUnlockTime;
-        public DateTime? MyUnlockTime
-        {
-            get => _myUnlockTime;
+            get => _hideAchievementsLockedForSelf;
             set
             {
-                // Normalise to UTC
+                SetValue(ref _hideAchievementsLockedForSelf, value);
+                RaiseSpoilerUiChanged();
+            }
+        }
+
+        private string _selfAchievementIcon;
+        [DontSerialize]
+        public string SelfAchievementIcon
+        {
+            get => _selfAchievementIcon;
+            set
+            {
+                SetValue(ref _selfAchievementIcon, value);
+                RaiseSpoilerUiChanged();
+            }
+        }
+
+        private string _friendAchievementIcon;
+        public string FriendAchievementIcon
+        {
+            get => _friendAchievementIcon;
+            set
+            {
+                SetValue(ref _friendAchievementIcon, value);
+                RaiseSpoilerUiChanged();
+            }
+        }
+
+        public string SelfAchievementIconResolved =>
+            !string.IsNullOrWhiteSpace(SelfAchievementIcon)
+                ? SelfAchievementIcon
+                : DefaultSelfAchIconPackUri;
+
+        // reveal allowed only when setting ON and not unlocked
+        public bool CanReveal => HideAchievementsLockedForSelf && SelfUnlockTime == null;
+
+        // single binding for icon
+        public string DisplayIcon
+        {
+            get
+            {
+                // If not revealable, always show real icon
+                if (!CanReveal)
+                {
+                    return !string.IsNullOrWhiteSpace(FriendAchievementIcon)
+                        ? FriendAchievementIcon
+                        : SelfAchievementIconResolved;
+                }
+
+                // Revealable: show user/hidden icon unless revealed
+                if (!IsRevealed)
+                {
+                    return SelfAchievementIconResolved;
+                }
+
+                // Revealed: show real icon
+                return !string.IsNullOrWhiteSpace(FriendAchievementIcon)
+                    ? FriendAchievementIcon
+                    : SelfAchievementIconResolved;
+            }
+        }
+
+        // Treat this as UTC internally
+        private DateTime? _SelfUnlockTime;
+        [DontSerialize]
+        public DateTime? SelfUnlockTime
+        {
+            get => _SelfUnlockTime;
+            set
+            {
                 DateTime? utc = null;
                 if (value.HasValue)
                 {
                     var v = value.Value;
-                    if (v.Kind == DateTimeKind.Utc)
-                        utc = v;
-                    else if (v.Kind == DateTimeKind.Local)
-                        utc = v.ToUniversalTime();
-                    else
-                        utc = DateTime.SpecifyKind(v, DateTimeKind.Utc);
+                    if (v.Kind == DateTimeKind.Utc) utc = v;
+                    else if (v.Kind == DateTimeKind.Local) utc = v.ToUniversalTime();
+                    else utc = DateTime.SpecifyKind(v, DateTimeKind.Utc);
                 }
 
-                SetValue(ref _myUnlockTime, utc);
-                OnPropertyChanged(nameof(MyUnlockTimeLocal));
+                SetValue(ref _SelfUnlockTime, utc);
+                OnPropertyChanged(nameof(SelfUnlockTimeLocal));
+                RaiseSpoilerUiChanged();
             }
         }
 
-        // Convenience for binding: local view
-        public DateTime? MyUnlockTimeLocal => _myUnlockTime?.ToLocalTime();
+        public DateTime? SelfUnlockTimeLocal => _SelfUnlockTime?.ToLocalTime();
 
-        private DateTime _unlockTime;
-        public DateTime UnlockTime
+        private DateTime _friendUnlockTime;
+        public DateTime FriendUnlockTime
         {
-            get => DateTime.SpecifyKind(_unlockTime, DateTimeKind.Utc);
+            get => DateTime.SpecifyKind(_friendUnlockTime, DateTimeKind.Utc);
             set
             {
                 var v = value;
-                if (v.Kind == DateTimeKind.Local)
-                {
-                    v = v.ToUniversalTime();
-                }
-                else if (v.Kind == DateTimeKind.Unspecified)
-                {
-                    v = DateTime.SpecifyKind(v, DateTimeKind.Utc);
-                }
+                if (v.Kind == DateTimeKind.Local) v = v.ToUniversalTime();
+                else if (v.Kind == DateTimeKind.Unspecified) v = DateTime.SpecifyKind(v, DateTimeKind.Utc);
 
-                SetValue(ref _unlockTime, v);
-                OnPropertyChanged(nameof(UnlockTimeLocal));
+                SetValue(ref _friendUnlockTime, v);
+                OnPropertyChanged(nameof(FriendUnlockTimeLocal));
             }
         }
 
-        public DateTime UnlockTimeLocal => UnlockTime.ToLocalTime();
+        public DateTime FriendUnlockTimeLocal => FriendUnlockTime.ToLocalTime();
+
+        // Expose explicit UTC property for persisted cache shape.
+        public DateTime FriendUnlockTimeUtc
+        {
+            get => DateTime.SpecifyKind(_friendUnlockTime, DateTimeKind.Utc);
+            set
+            {
+                var v = value;
+                if (v.Kind == DateTimeKind.Local) v = v.ToUniversalTime();
+                else if (v.Kind == DateTimeKind.Unspecified) v = DateTime.SpecifyKind(v, DateTimeKind.Utc);
+
+                SetValue(ref _friendUnlockTime, v);
+                OnPropertyChanged(nameof(FriendUnlockTimeLocal));
+            }
+        }
 
         private bool _isRevealed = false;
         public bool IsRevealed
         {
             get => _isRevealed;
-            set => SetValue(ref _isRevealed, value);
+            set
+            {
+                SetValue(ref _isRevealed, value);
+                RaiseSpoilerUiChanged();
+            }
         }
-    }
+
+        private void RaiseSpoilerUiChanged()
+        {
+            OnPropertyChanged(nameof(CanReveal));
+            OnPropertyChanged(nameof(SelfAchievementIconResolved));
+            OnPropertyChanged(nameof(DisplayIcon));
+        }
+}
+
 
     public class SteamFriend
     {
         public string SteamId { get; set; }
         public string PersonaName { get; set; }
         public string AvatarMediumUrl { get; set; }
-    }
-
-    public class SteamAchievement
-    {
-        public string ApiName { get; set; }
-        public bool Achieved { get; set; }
-        public DateTime? UnlockTime { get; set; }
-    }
-
-    public class AchievementMeta
-    {
-        public string Name { get; set; }
-        public string Description { get; set; }
-        public string IconUnlocked { get; set; }
-        public string IconLocked { get; set; }
     }
 
     public class FeedGroup

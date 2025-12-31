@@ -1,18 +1,20 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.Serialization;
 
-namespace FriendsAchievementFeed.Services
+namespace FriendsAchievementFeed.Models
 {
-    public class SelfAchievementGameData
+    public sealed class SelfAchievementGameData
     {
-        public DateTime LastUpdatedUtc { get; set; } = DateTime.UtcNow;
+        public DateTime LastUpdatedUtc { get; set; }
 
-        // Achievement API key -> my unlock time (UTC) if unlocked, otherwise null/missing.
-        public Dictionary<string, DateTime?> UnlockTimesUtc { get; set; }
-            = new Dictionary<string, DateTime?>(StringComparer.OrdinalIgnoreCase);
+        public bool NoAchievements { get; set; }
 
-        // Achievement API key -> locked icon URL as shown on *my* page (usually greyed).
-        public Dictionary<string, string> LockedIconUrls { get; set; }
-            = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, DateTime> UnlockTimesUtc { get; set; } =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        public Dictionary<string, string> SelfIconUrls { get; set; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
+
 }

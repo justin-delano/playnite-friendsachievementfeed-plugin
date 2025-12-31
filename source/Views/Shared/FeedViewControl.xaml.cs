@@ -1,16 +1,17 @@
 using System;
-using System.Threading.Tasks;
+using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using Playnite.SDK.Controls;
-using System.Diagnostics;
-using Playnite.SDK;
-using System.Linq;
-using System.Windows.Media;
-using System.Windows.Input;
-using FriendsAchievementFeed.Models;
-using System.Globalization;
 using System.Windows.Data;
+using System.Windows.Input;
+using System.Windows.Media;
+using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Views;          // <-- ADD THIS
+using Playnite.SDK;
+using Playnite.SDK.Controls;
+
 namespace FriendsAchievementFeed.Views.Shared
 {
     public partial class FeedViewControl : PluginUserControl
@@ -18,6 +19,31 @@ namespace FriendsAchievementFeed.Views.Shared
         public FeedViewControl()
         {
             InitializeComponent();
+        }
+
+        // Optional: only enable this from the owner that created the VM when confident
+        // the view will not be re-used after unload.
+        public static readonly DependencyProperty DisposeLogicOnUnloadProperty =
+            DependencyProperty.Register(nameof(DisposeLogicOnUnload), typeof(bool), typeof(FeedViewControl), new PropertyMetadata(false));
+
+        public bool DisposeLogicOnUnload
+        {
+            get => (bool)GetValue(DisposeLogicOnUnloadProperty);
+            set => SetValue(DisposeLogicOnUnloadProperty, value);
+        }
+
+        // NEW: filler slot for per-game refresh injection
+        public static readonly DependencyProperty ExtraRebuildContentProperty =
+            DependencyProperty.Register(
+                nameof(ExtraRebuildContent),
+                typeof(object),
+                typeof(FeedViewControl),
+                new PropertyMetadata(null));
+
+        public object ExtraRebuildContent
+        {
+            get => GetValue(ExtraRebuildContentProperty);
+            set => SetValue(ExtraRebuildContentProperty, value);
         }
 
         private void FriendClearButton_Click(object sender, RoutedEventArgs e)
@@ -35,52 +61,51 @@ namespace FriendsAchievementFeed.Views.Shared
                 vm.AchievementSearchText = string.Empty;
             }
         }
-        private static void ClearParentListBoxSelection(FrameworkElement fe)
+
+        private static ListBoxItem FindParentListBoxItem(DependencyObject obj)
         {
-            // Resolve the owning ListBoxItem
-            var container = fe as ListBoxItem ?? ItemsControl.ContainerFromElement(null, fe) as ListBoxItem;
-            if (container == null)
+            while (obj != null)
             {
-                return;
+                if (obj is ListBoxItem lbi)
+                {
+                    return lbi;
+                }
+
+                obj = VisualTreeHelper.GetParent(obj);
             }
 
-            // Find the parent ListBox
+            return null;
+        }
+
+        private static void ClearParentListBoxSelection(FrameworkElement fe)
+        {
+            if (fe == null) return;
+
+            var container = fe as ListBoxItem ?? FindParentListBoxItem(fe);
+            if (container == null) return;
+
             if (ItemsControl.ItemsControlFromItemContainer(container) is ListBox parentList)
             {
                 parentList.SelectedItem = null;
                 parentList.SelectedIndex = -1;
             }
         }
+
         private void AchievementItem_Click(object sender, MouseButtonEventArgs e)
         {
             try
             {
                 if (e.ChangedButton != MouseButton.Left)
-                {
                     return;
-                }
 
-                if (sender is FrameworkElement fe &&
-                    fe.DataContext is FriendsAchievementFeed.Models.FeedEntry entry)
+                if (sender is FrameworkElement fe && fe.DataContext is FeedEntry entry)
                 {
-                    var currentIcon = entry.AchievementIconUrl ?? string.Empty;
-                    var unlockedIcon = entry.AchievementIconUnlockedUrl ?? string.Empty;
-
-                    var isLockedVisual = !string.Equals(
-                        currentIcon,
-                        unlockedIcon,
-                        StringComparison.OrdinalIgnoreCase);
-
-                    var isHiddenDescription = entry.HideDescription;
-
-                    // Nothing to reveal — don't toggle.
-                    if (!isLockedVisual && !isHiddenDescription)
+                    if (entry.CanReveal)
                     {
-                        return;
+                        Logic?.ToggleReveal(entry);
                     }
 
-                    Logic?.ToggleReveal(entry);
-
+                    ClearParentListBoxSelection(fe);
                     e.Handled = true;
                 }
             }
@@ -101,8 +126,8 @@ namespace FriendsAchievementFeed.Views.Shared
 
                 if (sender is FrameworkElement fe)
                 {
-                    // Data context may be a FeedEntry (inner row) or a FeedGroup (header)
                     string steamId = null;
+
                     if (fe.DataContext is FeedEntry entry)
                     {
                         steamId = entry.FriendSteamId;
@@ -139,7 +164,6 @@ namespace FriendsAchievementFeed.Views.Shared
 
                 if (sender is FrameworkElement fe)
                 {
-                    // Data context may be a FeedEntry (header in per-entry views) or a FeedGroup (group header)
                     FeedEntry sample = null;
 
                     if (fe.DataContext is FeedEntry entry)
@@ -165,8 +189,9 @@ namespace FriendsAchievementFeed.Views.Shared
                         }
                         else if (fe.DataContext is FeedGroup grp && !string.IsNullOrWhiteSpace(grp.GameName))
                         {
-                            // Try to find a game by name in Playnite database
-                            var found = API.Instance.Database.Games.FirstOrDefault(g => string.Equals(g.Name, grp.GameName, StringComparison.OrdinalIgnoreCase));
+                            var found = API.Instance.Database.Games
+                                .FirstOrDefault(g => string.Equals(g.Name, grp.GameName, StringComparison.OrdinalIgnoreCase));
+
                             if (found != null)
                             {
                                 API.Instance.MainView.SelectGame(found.Id);
@@ -189,7 +214,6 @@ namespace FriendsAchievementFeed.Views.Shared
         {
             try
             {
-                // Try to open in Playnite embedded webview
                 var webViews = API.Instance.WebViews;
                 if (webViews != null)
                 {
@@ -208,7 +232,6 @@ namespace FriendsAchievementFeed.Views.Shared
 
             try
             {
-                // Fallback to default browser
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             }
             catch (Exception ex)
@@ -262,13 +285,9 @@ namespace FriendsAchievementFeed.Views.Shared
                     await Logic.RefreshAsync();
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                if (Logic != null)
-                {
-                    Logic.StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedLoadFeed");
-                    Logic.Logger?.Error(ex, "Failed to refresh feed on load");
-                }
+                // ignore
             }
         }
 
@@ -276,9 +295,13 @@ namespace FriendsAchievementFeed.Views.Shared
         {
             try
             {
-                Logic?.Dispose();
+                // IMPORTANT: do NOT dispose injected VMs unless explicitly requested
+                if (DisposeLogicOnUnload)
+                {
+                    Logic?.Dispose();
+                }
             }
-            catch (Exception)
+            catch
             {
                 // ignore cleanup failures
             }
@@ -298,7 +321,6 @@ namespace FriendsAchievementFeed.Views.Shared
             {
                 if (dt.Kind == DateTimeKind.Local)
                 {
-                    // Old cache entries that were already local
                     return dt;
                 }
 
@@ -307,7 +329,6 @@ namespace FriendsAchievementFeed.Views.Shared
                     return dt.ToLocalTime();
                 }
 
-                // Unspecified: in the new world we treat stored values as UTC
                 return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
             }
 
@@ -316,7 +337,6 @@ namespace FriendsAchievementFeed.Views.Shared
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         {
-            // Not used for display-only bindings; keep as-is or convert back to UTC if you ever need two-way
             return value;
         }
     }
