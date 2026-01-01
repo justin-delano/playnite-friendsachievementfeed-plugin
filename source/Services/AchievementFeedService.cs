@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using Common;
 
 namespace FriendsAchievementFeed.Services
 {
@@ -42,12 +43,9 @@ namespace FriendsAchievementFeed.Services
         // Hydrates friend-only cached entries to UI FeedEntry (overlay self at UI time)
         private readonly FeedEntryHydrator _hydrator;
 
-        // Progress state (kept here so progress logic is centralized/consistent)
-        private volatile bool _selfStartedSeen;
-        private volatile bool _selfCompletedSeen;
-        private CacheRebuildService.RebuildStage? _lastStage;
-        private readonly SemaphoreSlim _settingsSaveGate = new SemaphoreSlim(1, 1);
-        private CancellationTokenSource _settingsSaveDebounceCts;
+        // Progress mapping delegated to helper
+        private readonly RebuildProgressMapper _progressMapper;
+        private readonly SettingsPersistenceService _settingsPersistence;
         public ICacheService Cache => _cacheService;
 
         public event EventHandler CacheChanged
@@ -74,8 +72,10 @@ namespace FriendsAchievementFeed.Services
             _hydrator = new FeedEntryHydrator(_cacheService, _entryFactory);
 
             _rebuildService = new CacheRebuildService(_steam, _entryFactory, _cacheService, _settings, _logger, _api);
+            _progressMapper = new RebuildProgressMapper();
+            _settingsPersistence = new SettingsPersistenceService(_settings, _plugin, _cacheService, _logger, PostToUi);
 
-            try { _cacheService.CacheChanged += CacheService_CacheChanged; }
+            try { _cacheService.CacheChanged += _settingsPersistence.OnCacheChanged; }
             catch (Exception e)
             {
                 _logger?.Error(e, ResourceProvider.GetString("LOCFriendsAchFeed_Error_RefreshFeedAfterCacheChange"));
@@ -89,10 +89,7 @@ namespace FriendsAchievementFeed.Services
         private void PostToUi(Action action)
         {
             var dispatcher = _api?.MainView?.UIDispatcher;
-            if (dispatcher != null && !dispatcher.CheckAccess())
-                dispatcher.BeginInvoke(action, DispatcherPriority.Background);
-            else
-                action();
+            dispatcher.InvokeIfNeeded(action, DispatcherPriority.Background);
         }
 
         private void Report(string message, int current = 0, int total = 0, bool canceled = false)
@@ -118,81 +115,6 @@ namespace FriendsAchievementFeed.Services
                 catch (Exception e)
                 {
                     _logger?.Error(e, ResourceProvider.GetString("LOCFriendsAchFeed_Error_NotifySubscribers"));
-                }
-            });
-        }
-
-        private void CacheService_CacheChanged(object sender, EventArgs e)
-        {
-            // Exposed paths for debugging.
-            PostToUi(() =>
-            {
-                try
-                {
-                    var entries = _cacheService.GetCachedFriendEntries() ?? new List<FeedEntry>();
-
-                    var cacheDir = Path.Combine(_plugin.GetPluginUserDataPath(), "achievement_cache");
-                    _settings.ExposedGlobalFeedPath = cacheDir;
-
-                    _settings.ExposedGameFeeds = entries
-                        .GroupBy(en => en.PlayniteGameId?.ToString() ?? en.AppId.ToString())
-                        .Where(g => !string.IsNullOrWhiteSpace(g.Key))
-                        .ToDictionary(
-                            g => g.Key,
-                            g => Path.Combine(cacheDir, $"{g.Key}.json"),
-                            StringComparer.OrdinalIgnoreCase);
-
-                    ScheduleSettingsSave();
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Error(ex, ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed"));
-                }
-            });
-        }
-
-        private void ScheduleSettingsSave()
-        {
-            // Debounce: collapse many cache-changed events into one save
-            _settingsSaveDebounceCts?.Cancel();
-            _settingsSaveDebounceCts?.Dispose();
-            _settingsSaveDebounceCts = new CancellationTokenSource();
-            var token = _settingsSaveDebounceCts.Token;
-
-            Task.Run(async () =>
-            {
-                try
-                {
-                    // wait for churn to settle
-                    await Task.Delay(400, token).ConfigureAwait(false);
-
-                    await _settingsSaveGate.WaitAsync(token).ConfigureAwait(false);
-                    try
-                    {
-                        // Retry in case something external briefly holds the file (AV/indexer)
-                        for (var attempt = 0; attempt < 5; attempt++)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            try
-                            {
-                                _settings.EndEdit(); // calls SavePluginSettings -> config.json
-                                return;
-                            }
-                            catch (IOException)
-                            {
-                                await Task.Delay(150 * (attempt + 1), token).ConfigureAwait(false);
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        _settingsSaveGate.Release();
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex)
-                {
-                    _logger?.Error(ex, "[FAF] Failed to persist plugin settings.");
                 }
             });
         }
@@ -252,145 +174,18 @@ namespace FriendsAchievementFeed.Services
         }
 
         // -----------------------------
-        // Centralized progress mapping (ONE PLACE)
+        // Centralized progress mapping (via helper)
         // -----------------------------
 
-        private string StageMessage(CacheRebuildService.RebuildStage stage)
+        private void HandleUpdate(CacheRebuildService.RebuildUpdate update)
         {
-            switch (stage)
+            var mapped = _progressMapper.Map(update);
+            if (mapped == null)
             {
-                case CacheRebuildService.RebuildStage.NotConfigured: return ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
-                case CacheRebuildService.RebuildStage.LoadingOwnedGames: return ResourceProvider.GetString("LOCFriendsAchFeed_Targeted_LoadingOwnedGames");
-                case CacheRebuildService.RebuildStage.LoadingFriends: return ResourceProvider.GetString("LOCFriendsAchFeed_Targeted_LoadingFriends");
-                case CacheRebuildService.RebuildStage.LoadingExistingCache: return "Loading existing cache…";
-                case CacheRebuildService.RebuildStage.LoadingSelfOwnedApps: return "Loading your owned games…";
-                case CacheRebuildService.RebuildStage.RefreshingSelfAchievements: return "Refreshing your achievements…";
-                case CacheRebuildService.RebuildStage.ProcessingFriends: return "Scanning friends…";
-                default: return null;
-            }
-        }
-
-        private (int Cur, int Total) ProgressSteps(CacheRebuildService.RebuildUpdate u, int fallbackCur = 0, int fallbackTotal = 0)
-        {
-            if (u != null && u.OverallCount > 0)
-                return (Math.Max(0, u.OverallIndex), Math.Max(1, u.OverallCount));
-
-            return (Math.Max(0, fallbackCur), Math.Max(0, fallbackTotal));
-        }
-
-        private string AppSuffix(CacheRebuildService.RebuildUpdate u)
-        {
-            if (u == null) return string.Empty;
-            if (!string.IsNullOrWhiteSpace(u.CurrentGameName)) return " — " + u.CurrentGameName;
-            if (u.CurrentAppId > 0) return " — app " + u.CurrentAppId;
-            return string.Empty;
-        }
-
-        private void HandleUpdate(CacheRebuildService.RebuildUpdate u)
-        {
-            if (u == null) return;
-
-            // Stage updates: indeterminate (easy to change globally)
-            if (u.Kind == CacheRebuildService.RebuildUpdateKind.Stage)
-            {
-                _lastStage = u.Stage;
-
-                var msg = StageMessage(u.Stage);
-                if (!string.IsNullOrWhiteSpace(msg))
-                {
-                    // If stage is "RefreshingSelfAchievements", the service may also emit SelfStarted;
-                    // we suppress that once we see the stage message to reduce noise.
-                    if (u.Stage == CacheRebuildService.RebuildStage.RefreshingSelfAchievements)
-                        _selfStartedSeen = true;
-
-                    Report(msg);
-                }
-
                 return;
             }
 
-            switch (u.Kind)
-            {
-                // ---- Self ----
-                case CacheRebuildService.RebuildUpdateKind.SelfStarted:
-                {
-                    if (_selfStartedSeen) return;
-                    _selfStartedSeen = true;
-
-                    var total = Math.Max(0, u.SelfAppCount);
-                    var msg = total > 0
-                        ? $"You — refreshing achievements — 0/{total}"
-                        : "You — refreshing achievements…";
-
-                    Report(msg);
-                    return;
-                }
-
-                case CacheRebuildService.RebuildUpdateKind.SelfProgress:
-                {
-                    var part = (u.SelfAppCount > 0)
-                        ? $"refreshing {Math.Max(0, u.SelfAppIndex)}/{u.SelfAppCount}"
-                        : "refreshing…";
-
-                    var msg = "You — " + part + AppSuffix(u);
-                    var steps = ProgressSteps(u);
-                    Report(msg, steps.Cur, steps.Total);
-                    return;
-                }
-
-                case CacheRebuildService.RebuildUpdateKind.SelfCompleted:
-                {
-                    if (_selfCompletedSeen) return;
-                    _selfCompletedSeen = true;
-
-                    var steps = ProgressSteps(u);
-                    Report("Your achievements cache is up to date.", steps.Cur, steps.Total);
-                    return;
-                }
-
-                // ---- Friends ----
-                case CacheRebuildService.RebuildUpdateKind.FriendStarted:
-                {
-                    var totalApps = Math.Max(0, u.FriendAppCount);
-                    var msg =
-                        $"{u.FriendPersonaName} ({u.FriendIndex}/{u.FriendCount})" +
-                        $" — candidates: {u.CandidateGames}" +
-                        $" — scanning 0/{totalApps}";
-
-                    var steps = ProgressSteps(u, u.FriendIndex, u.FriendCount);
-                    Report(msg, steps.Cur, steps.Total);
-                    return;
-                }
-
-                case CacheRebuildService.RebuildUpdateKind.FriendProgress:
-                {
-                    var part = (u.FriendAppCount > 0)
-                        ? $"scanning {Math.Max(0, u.FriendAppIndex)}/{u.FriendAppCount}"
-                        : "scanning…";
-
-                    var msg =
-                        $"{u.FriendPersonaName} ({u.FriendIndex}/{u.FriendCount}) — {part}{AppSuffix(u)}";
-
-                    var steps = ProgressSteps(u, u.FriendIndex, u.FriendCount);
-                    Report(msg, steps.Cur, steps.Total);
-                    return;
-                }
-
-                case CacheRebuildService.RebuildUpdateKind.FriendCompleted:
-                {
-                    var msg =
-                        $"{u.FriendPersonaName} ({u.FriendIndex}/{u.FriendCount})" +
-                        $" — candidates: {u.CandidateGames}" +
-                        $" — new: {u.FriendNewEntries}";
-
-                    var steps = ProgressSteps(u, u.FriendIndex, u.FriendCount);
-                    Report(msg, steps.Cur, steps.Total);
-                    return;
-                }
-
-                default:
-                    return;
-            }
+            Report(mapped.Message, mapped.CurrentStep, mapped.TotalSteps, mapped.IsCanceled);
         }
 
         // -----------------------------
@@ -425,9 +220,7 @@ namespace FriendsAchievementFeed.Services
 
         private void ResetRunState()
         {
-            _selfStartedSeen = false;
-            _selfCompletedSeen = false;
-            _lastStage = null;
+            _progressMapper.Reset();
         }
 
         private async Task RunManagedAsync(
@@ -489,9 +282,9 @@ namespace FriendsAchievementFeed.Services
                         return string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_FoundNewEntries"), s.NewEntriesCount);
 
                     if (s.NoCandidatesDetected)
-                        return "No candidates detected. Cache is up to date.";
+                        return ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_NoCandidates");
 
-                    return $"Scanned candidates (count={s.CandidateGamesTotal}). No new achievements found.";
+                    return string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_NoNew_WithCount"), s.CandidateGamesTotal);
                 },
                 errorLogMessage: ResourceProvider.GetString("LOCFriendsAchFeed_Error_ManagedRebuild"));
         }
@@ -506,8 +299,9 @@ namespace FriendsAchievementFeed.Services
                 {
                     var s = payload?.Summary;
                     if (s == null) return ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedRebuild");
-                    if (s.NewEntriesCount > 0) return $"Found {s.NewEntriesCount} new achievements for {gameName}.";
-                    return $"Scanned {gameName}. No new achievements found.";
+                    if (s.NewEntriesCount > 0)
+                        return string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_SingleGame_Found"), s.NewEntriesCount, gameName);
+                    return string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_SingleGame_None"), gameName);
                 },
                 errorLogMessage: "[FAF] Managed single-game scan failed.");
         }
@@ -528,12 +322,12 @@ namespace FriendsAchievementFeed.Services
                     if (s == null) return ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedRebuild");
 
                     if (s.NoCandidatesDetected)
-                        return "Incremental scan: no recent friend/game candidates found (cache may be empty).";
+                        return ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_Incremental_NoCandidates");
 
                     if (s.NewEntriesCount > 0)
-                        return $"Incremental scan found {s.NewEntriesCount} new achievements.";
+                        return string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_Incremental_Found"), s.NewEntriesCount);
 
-                    return "Incremental scan completed. No new achievements found.";
+                    return ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Final_Incremental_None");
                 },
                 errorLogMessage: "[FAF] Managed incremental scan failed.");
         }

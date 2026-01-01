@@ -2,131 +2,154 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
 
+    <!-- Plugin -->
     <sys:String x:Key="LOCFriendsAchFeed_Title_PluginName">Friends Achievement Feed</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_Header">Succès des amis</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Description">Paramètres du flux de succès de vos amis Steam</sys:String>
 
+    <!-- Tabs -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_TabGeneral">Paramètres</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_TabFamilySharing">Partage familial</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_TabPreview">Aperçu</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Status_Sample">Aperçu : exemple de flux enregistré</sys:String>
 
+    <!-- Steam auth -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamConnection">Connexion Steam</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamUserId">Votre SteamID64</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamUserId_Hint">Identifiant Steam au format 64 bits (pas le nom de profil).</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Default">Statut d'auth Steam : inconnu</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Checking">Vérification en cours...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey">Clé Steam Web API</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckSteamAuth">Vérifier l'authentification Steam</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">Se réauthentifier (ouvrir le navigateur)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">S'authentifier (ouvrir le navigateur)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckingSteamAuth">Vérification de l'authentification Steam...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_OK">Authentification Steam OK</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_WebAuthUnavailable">L'authentification web Steam n'est pas disponible.</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_FeedLimits">Limites du flux</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_MaxFeedEntries">Nombre d’éléments affichés par défaut</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickRebuildPairLimit">Mise à jour rapide : succès récents à inspecter</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickRebuildPairLimit_Desc">Nombre de succès récents à inspecter lors d’une mise à jour rapide (incrémentale).</sys:String>
+    <!-- Buttons / tooltips -->
+    <sys:String x:Key="LOCFriendsAchFeed_Button_Clear">Effacer</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Tooltip_Clear">Effacer</sys:String>
 
+    <!-- Advanced and cache -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Advanced">Options avancées et performances</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_EnablePeriodicUpdates">Activer les mises à jour automatiques en arrière-plan</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_HoursBetweenUpdates">Intervalle entre les mises à jour (en heures) </sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_EnableNotifications">Activer les notifications du plugin</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyPeriodicUpdates">Afficher une notification pour les mises à jour automatiques</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyOnRebuild">Afficher une notification à la fin ou en cas d’échec d’une mise à jour</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_Appearance">Apparence et affichage</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_FriendAvatarSize">Taille de l’avatar des amis (px)</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_AchievementIconSize">Taille des icônes de succès (px)</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_HideLocked">Masquer les succès que vous n’avez pas débloqués</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_ShowMyUnlockTime">Afficher votre date de déblocage</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_GameFeedTabHeight">Hauteur de l’onglet du flux de jeu (px)</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames">Analyser tous mes jeux</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SearchAllMyGames_Desc">Analyse les succès de tous les jeux que vous possédez, même si vos amis ne les possèdent pas (utile pour le partage familial Steam).</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick">Rapide</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick_Tooltip">Met à jour le flux avec les nouveaux succès uniquement</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full">Full 🔄</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full_Tooltip">Reconstruit entièrement le flux (plus lent)</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel">Annuler</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip">Annuler la mise à jour en cours</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Friend">Ami :</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Achievement">Succès :</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Game">Jeu :</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_MyUnlockTime">Débloqué par vous :</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Status_CacheLast">Dernière mise à jour du cache :</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Feed_Tooltip_SearchAchievement">Rechercher un succès</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Error_FailedLoadFeed">Impossible de charger le flux. Consultez le journal pour plus de détails.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Failed">Échec de la mise à jour.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Completed">Mise à jour terminée.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Canceled">Mise à jour annulée.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Error_FailedRebuild">Impossible de mettre à jour le cache. Consultez le journal.</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Error_RefreshFeedAfterCacheChange">Erreur lors du rafraîchissement du flux après la mise à jour du cache.</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamNotConfigured">La clé Steam Web API ou le SteamID n’est pas configuré</sys:String>
-
-    <!-- New cache / settings strings -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Title">Cache</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Description">Supprime les données de cache des succès du plugin (global et par-jeu).</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_WipeCache_All">Supprimer tout le cache</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_Wiped">Cache supprimé.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Cache_WipeFailed">Impossible de supprimer le cache (des fichiers restent).</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_EnablePeriodicUpdates">Activer les mises à jour automatiques en arrière-plan</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_HoursBetweenUpdates">Intervalle entre les mises à jour (en heures)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_EnableNotifications">Activer les notifications du plugin</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyPeriodicUpdates">Afficher une notification pour les mises à jour automatiques</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyOnRebuild">Afficher une notification à la fin ou en cas d'échec d'une mise à jour</sys:String>
 
-    <!-- Steam auth messages -->
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_OK">Authentification Steam OK</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_Failed">Échec de l'authentification Steam</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_Status_ReauthStarted">Ouverture de la page de connexion Steam dans le navigateur</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_MissingCredentials">Clé Steam Web API ou SteamID manquant.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_InvalidSteamId">SteamID invalide.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_NoResponse">Aucune information utilisateur retournée (clé ou utilisateur invalide).</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamAuth_OK">Authentification Steam OK</sys:String>
+    <!-- Appearance -->
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_Appearance">Apparence et affichage</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_FriendAvatarSize">Taille de l'avatar des amis (px)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_AchievementIconSize">Taille des icônes de succès (px)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_HideLocked">Masquer les succès que vous n'avez pas débloqués</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_ShowSelfUnlockTime">Afficher votre date de déblocage</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_GameFeedTabHeight">Hauteur de l'onglet du flux de jeu (px)</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundOwnedGames_LoadingFriends">{0} jeux Steam détectés. Chargement de la liste d’amis…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Targeted_FoundOwnedGames">{0} jeux Steam détectés. Préparation de la mise à jour ciblée...</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Targeted_BuildingLiveFeed">Construction du flux en direct pour {0} jeux spécifiés...</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingOwnedGames">Préparation de la mise à jour ciblée : chargement des jeux possédés...</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Targeted_BuildingOwnedGames">Construction de la carte des jeux possédés...</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingFriends">Chargement de la liste d’amis...</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundFriends_LoadingAchievements">{0} amis détectés. Chargement des succès…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">{0} nouveaux succès détectés…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_CacheMerged">Cache mis à jour avec {0} nouveaux succès</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_NoNewSinceLastUpdate">Aucun nouveau succès depuis la dernière mise à jour</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_CacheUpdated">Cache mis à jour avec {0} succès</sys:String>
+    <!-- Family sharing tab -->
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_FamilySharing_Description">Sélectionnez jusqu'à 5 comptes de partage familial pour découvrir plus de succès.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_FamilySharing_FriendLabelPrefix">Ami</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_FamilySharing_ScanButton">Analyser les comptes de partage familial</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_NoExistingCache_FullRebuild">Aucun cache existant. Lancement d’une mise à jour complète…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_RunningIncremental">Mise à jour rapide en cours…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundFriendsWithCache_CheckingUpdates">{0} amis avec des données existantes détectés. Vérification des nouveautés…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_IncrementalFoundNewEntries">La mise à jour rapide a trouvé {0} nouveaux succès…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_CacheMergedIncremental">Cache mis à jour avec {0} nouveaux succès (rapide)</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_NoNewIncremental">Aucun nouveau succès trouvé lors de la mise à jour rapide</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_LoadingAchievementsFor">Chargement des succès pour {0}… ({1}/{2})</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_QuickUpdateFor">Mise à jour rapide pour {0}… ({1}/{2})</sys:String>
-
+    <!-- Feed controls -->
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh">Actualiser 🔄</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip">Actualiser le flux</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel">Annuler</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip">Annuler la mise à jour en cours</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick">Rapide</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick_Tooltip">Met à jour le flux avec les nouveaux succès uniquement</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full">Complet 🔄</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full_Tooltip">Reconstruit entièrement le flux (plus lent)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Friend">Ami :</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Game">Jeu :</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_Achievement">Succès :</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Label_SelfUnlockTime">Débloqué par vous :</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Tooltip_SearchAchievement">Rechercher un succès</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Status_CacheLast">Dernière mise à jour du cache :</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Header_Achieved">a débloqué</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Header_In">dans</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Status_LoadingFromCache">Chargement depuis le cache…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Status_NoCache_Building">Aucun cache trouvé. Création du flux…</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Status_UpdatingCache">Mise à jour du flux…</sys:String>
+    <!-- Feed statuses -->
+    <sys:String x:Key="LOCFriendsAchFeed_Status_LoadingFromCache">Chargement depuis le cache...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Status_NoCache_Building">Aucun cache trouvé. Création du flux...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Status_UpdatingCache">Mise à jour du flux...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_Entries">{0} éléments</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Status_CacheRebuilt">{0} éléments (flux mis à jour)</sys:String>
-
     <sys:String x:Key="LOCFriendsAchFeed_Status_Never">Jamais</sys:String>
 
-    <sys:String x:Key="LOCFriendsAchFeed_Error_MissingSteamUserId">Le SteamID64 est requis pour que le flux fonctionne.</sys:String>
-    
-    <sys:String x:Key="LOCFriendsAchFeed_Error_InvalidMaxFeedItems">Le nombre d’éléments du flux doit être supérieur à 0.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Error_InvalidQuickRebuildPairLimit">La limite de paires pour la mise à jour rapide doit être supérieure à 0.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_WindowTitle_GameFeedFor">Succès des amis – {0}</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Status_FriendsActivity_Count">Activité des amis : {0} éléments</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Status_NoFriendAchievementsForGame">Aucun succès d’ami pour ce jeu.</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Debug_RebuildCanceledByUser">Mise à jour annulée par l’utilisateur.</sys:String>
-
-    <sys:String x:Key="LOCFriendsAchFeed_Error_FileOperationFailed">Impossible de {0}. Consultez le journal pour plus de détails.</sys:String>
+    <!-- Errors / validation -->
+    <sys:String x:Key="LOCFriendsAchFeed_Error_FailedLoadFeed">Impossible de charger le flux. Consultez le journal pour plus de détails.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_FailedRebuild">Impossible de mettre à jour le cache. Consultez le journal.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_RefreshFeedAfterCacheChange">Erreur lors du rafraîchissement du flux après la mise à jour du cache.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamNotConfigured">La clé Steam Web API ou le SteamID n'est pas configuré</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Error_NotifySubscribers">Erreur lors de la notification des abonnés {0}.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Debug_TargetedUpdateSkipped">Mise à jour ciblée ignorée car une reconstruction est déjà en cours.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_FileOperationFailed">Impossible de {0}. Consultez le journal pour plus de détails.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_ManagedRebuild">Erreur inattendue lors de la mise à jour gérée. Voir le journal pour plus de détails.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_CancelActiveRebuild">Impossible d'annuler la reconstruction en cours. Voir le journal pour plus de détails.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamSessionNotFound">Session Steam introuvable. Authentifiez-vous et réessayez.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamRateLimited">Limitation Steam (429). Réessayez plus tard.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_NoProfileReturned">Aucun profil retourné.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamCookiesInvalid">Les cookies Steam semblent invalides (toujours déconnecté après l'actualisation).</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_SteamProfileMarkersNotFound">Indicateurs de profil Steam introuvables.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_FailedLoadFriends">Impossible de charger les amis : {0}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_FamilySharingStartFailed">Impossible de démarrer l'analyse du partage familial : {0}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_MissingSteamUserId">Le SteamID64 est requis pour que le flux fonctionne.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_InvalidMaxFeedItems">Le nombre d'éléments du flux doit être supérieur à 0.</sys:String>
+
+    <!-- Shared formatting -->
+    <sys:String x:Key="LOCFriendsAchFeed_Format_Counts">{0}/{1}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Text_Ellipsis">…</sys:String>
+
+    <!-- Progress / info messages -->
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingOwnedGames">Préparation de la mise à jour ciblée : chargement des jeux possédés...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingFriends">Chargement de la liste d'amis...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingExistingCache">Chargement du cache existant…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_LoadingSelfOwnedApps">Chargement de vos jeux…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_RefreshingSelfAchievements">Actualisation de vos succès…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Targeted_ProcessingFriends">Analyse des amis…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Action_RefreshingAchievements">actualisation des succès</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Action_ScanningCounts">analyse {0}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Label_Candidates">candidats : {0}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Label_NewEntries">nouveaux : {0}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Label_AppId">app {0}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Line_Self">{0} — {1} {2}{3}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Line_Friend">{0} ({1}/{2}) — {3}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Detail_WithSeparator">{0} — {1}</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_YourCacheUpToDate">Votre cache de succès est à jour.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">{0} nouveaux succès détectés…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Completed">Mise à jour terminée.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Canceled">Mise à jour annulée.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Debug_RebuildCanceledByUser">Mise à jour annulée par l'utilisateur.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Progress_LoadingFriends">Chargement des amis…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Info_AuthenticateWithSteam">Authentifiez-vous avec Steam (onglet Général) pour charger vos amis.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Info_LoadedFriends">{0} amis chargés.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Info_NoFriends">Aucun ami trouvé ou profil privé.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Progress_FamilySharing_Start">Démarrage de l'analyse du partage familial…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Progress_FamilySharing_Title">Succès des amis — Analyse partage familial</sys:String>
+
+    <!-- Final summaries -->
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_NoCandidates">Aucun candidat détecté. Le cache est à jour.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_NoNew_WithCount">Candidats analysés (total={0}). Aucun nouveau succès trouvé.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_SingleGame_Found">{0} nouveaux succès trouvés pour {1}.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_SingleGame_None">Analyse de {0}. Aucun nouveau succès trouvé.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_Incremental_NoCandidates">Analyse incrémentale : aucun candidat ami/jeu récent trouvé (le cache est peut-être vide).</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_Incremental_Found">Analyse incrémentale : {0} nouveaux succès trouvés.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Final_Incremental_None">Analyse incrémentale terminée. Aucun nouveau succès trouvé.</sys:String>
+
+    <!-- Titles -->
+    <sys:String x:Key="LOCFriendsAchFeed_Label_You">Vous</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_WindowTitle_GameFeedFor">Succès des amis – {0}</sys:String>
+
+    <!-- Preview sample content -->
+    <sys:String x:Key="LOCFriendsAchFeed_Preview_Subtitle">Aperçu de la mise en page du flux (données d'exemple)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_FriendName">Ami exemple</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_GameName">Jeu exemple</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_HiddenAchievementTitle">Succès caché</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_HiddenAchievementDescription">(description cachée jusqu'au déblocage)</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_VisibleAchievementTitle">Succès visible</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_VisibleAchievementDescription">Terminez le didacticiel.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_Date">Mercredi 1 janvier 2025</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_TimeFriend">20:15</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_TimeSelf">01/01/2025 20:15</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Sample_CacheTimestamp">2025-01-01 12:34</sys:String>
 
 </ResourceDictionary>

@@ -11,7 +11,8 @@
 
     <!-- Margin to keep the view clear of the window header -->
     <shared:FeedViewControl x:Name="MainControl"
-                            Margin="0,30,0,0">
+                            Margin="0,30,0,0"
+                            ShowGameName="True">
         <shared:FeedViewControl.ExtraFiltersContent>
             <StackPanel Orientation="Vertical">
                 <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Feed_Label_Game}"
@@ -59,9 +60,10 @@
             </StackPanel>
         </shared:FeedViewControl.ExtraFiltersContent>
         <shared:FeedViewControl.ExtraRebuildContent>
-            <Button Content="Quick Scan"
-                    ToolTip="Scan only most recent friends and games for new achievements."
-                    Command="{Binding QuickScanCommand}" />
+            <Button Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Quick}"
+                FontSize="12"
+                ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Quick_Tooltip}"
+                Command="{Binding QuickScanCommand}" />
         </shared:FeedViewControl.ExtraRebuildContent>
     </shared:FeedViewControl>
 </controls:PluginUserControl>

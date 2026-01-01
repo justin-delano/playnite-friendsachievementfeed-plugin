@@ -1,14 +1,12 @@
 using System;
 using System.Diagnostics;
-using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using FriendsAchievementFeed.Models;
-using FriendsAchievementFeed.Views;          // <-- ADD THIS
+using FriendsAchievementFeed.Views;
 using Playnite.SDK;
 using Playnite.SDK.Controls;
 
@@ -308,36 +306,4 @@ namespace FriendsAchievementFeed.Views.Shared
         }
     }
 
-    public class UtcToLocalConverter : IValueConverter
-    {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-        {
-            if (value == null)
-            {
-                return null;
-            }
-
-            if (value is DateTime dt)
-            {
-                if (dt.Kind == DateTimeKind.Local)
-                {
-                    return dt;
-                }
-
-                if (dt.Kind == DateTimeKind.Utc)
-                {
-                    return dt.ToLocalTime();
-                }
-
-                return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
-            }
-
-            return value;
-        }
-
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-        {
-            return value;
-        }
-    }
 }

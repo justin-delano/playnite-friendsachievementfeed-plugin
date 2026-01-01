@@ -6,6 +6,7 @@ using System.ComponentModel;
 using Playnite.SDK.Data;
 using System.IO;
 using Common;
+using System.Linq;
 
 namespace FriendsAchievementFeed.Models
 {
@@ -36,16 +37,7 @@ namespace FriendsAchievementFeed.Models
         // Expose paths to cache locations instead of storing full feed entries
         private string _exposedGlobalFeedPath = string.Empty;
         private Dictionary<string, string> _exposedGameFeeds = new Dictionary<string, string>();
-        private string _friend1Name = string.Empty;
-        private string _friend1SteamId = string.Empty;
-        private string _friend2Name = string.Empty;
-        private string _friend2SteamId = string.Empty;
-        private string _friend3Name = string.Empty;
-        private string _friend3SteamId = string.Empty;
-        private string _friend4Name = string.Empty;
-        private string _friend4SteamId = string.Empty;
-        private string _friend5Name = string.Empty;
-        private string _friend5SteamId = string.Empty;
+        public List<FriendSlot> FriendSlots { get; set; } = new List<FriendSlot>();
         public string SteamUserId
         {
             get => _steamUserId;
@@ -207,64 +199,76 @@ namespace FriendsAchievementFeed.Models
             set => SetValue(ref _exposedGameFeeds, value ?? new Dictionary<string, string>());
         }
 
-        public string Friend1Name
+        /// <summary>
+        /// Returns distinct, non-empty friend Steam IDs configured for family sharing.
+        /// </summary>
+        public IEnumerable<string> GetConfiguredFriendIds()
         {
-            get => _friend1Name;
-            set => SetValue(ref _friend1Name, value ?? string.Empty);
+            return (FriendSlots ?? new List<FriendSlot>())
+                .Select(s => s?.SteamId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
         }
 
-        public string Friend1SteamId
+        /// <summary>
+        /// Update a friend slot and keep legacy properties in sync for compatibility.
+        /// </summary>
+        public void SetFriendSlot(int index, string name, string steamId)
         {
-            get => _friend1SteamId;
-            set => SetValue(ref _friend1SteamId, value ?? string.Empty);
+            if (index < 0)
+            {
+                return;
+            }
+
+            FriendSlots ??= new List<FriendSlot>();
+            EnsureFriendSlotsCapacity(index + 1);
+
+            FriendSlots[index] = new FriendSlot
+            {
+                Name = name ?? string.Empty,
+                SteamId = steamId ?? string.Empty
+            };
         }
 
-        public string Friend2Name
+        public FriendSlot GetFriendSlot(int index)
         {
-            get => _friend2Name;
-            set => SetValue(ref _friend2Name, value ?? string.Empty);
+            if (index < 0)
+            {
+                return new FriendSlot();
+            }
+
+            FriendSlots ??= new List<FriendSlot>();
+            EnsureFriendSlotsCapacity(index + 1);
+
+            return FriendSlots[index] ?? new FriendSlot();
         }
 
-        public string Friend2SteamId
+        private void EnsureFriendSlotsCapacity(int size)
         {
-            get => _friend2SteamId;
-            set => SetValue(ref _friend2SteamId, value ?? string.Empty);
+            while (FriendSlots.Count < size)
+            {
+                FriendSlots.Add(new FriendSlot());
+            }
         }
 
-        public string Friend3Name
+        private List<FriendSlot> BuildFriendSlots(FriendsAchievementFeedSettings saved)
         {
-            get => _friend3Name;
-            set => SetValue(ref _friend3Name, value ?? string.Empty);
+            if (saved?.FriendSlots != null && saved.FriendSlots.Any())
+            {
+                return CloneSlots(saved.FriendSlots);
+            }
+
+            return new List<FriendSlot>();
         }
 
-        public string Friend3SteamId
+        private List<FriendSlot> CloneSlots(List<FriendSlot> source)
         {
-            get => _friend3SteamId;
-            set => SetValue(ref _friend3SteamId, value ?? string.Empty);
-        }
+            if (source == null)
+            {
+                return new List<FriendSlot>();
+            }
 
-        public string Friend4Name
-        {
-            get => _friend4Name;
-            set => SetValue(ref _friend4Name, value ?? string.Empty);
-        }
-
-        public string Friend4SteamId
-        {
-            get => _friend4SteamId;
-            set => SetValue(ref _friend4SteamId, value ?? string.Empty);
-        }
-
-        public string Friend5Name
-        {
-            get => _friend5Name;
-            set => SetValue(ref _friend5Name, value ?? string.Empty);
-        }
-
-        public string Friend5SteamId
-        {
-            get => _friend5SteamId;
-            set => SetValue(ref _friend5SteamId, value ?? string.Empty);
+            return source.Select(s => s?.Clone() ?? new FriendSlot()).ToList();
         }
 
         // Parameterless ctor for deserialization
@@ -318,22 +322,20 @@ namespace FriendsAchievementFeed.Models
                 NotifyOnRebuild = saved.NotifyOnRebuild;
                 ExposedGlobalFeedPath = saved.ExposedGlobalFeedPath ?? string.Empty;
                 ExposedGameFeeds = saved.ExposedGameFeeds ?? new Dictionary<string, string>();
-                Friend1Name = saved.Friend1Name ?? string.Empty;
-                Friend1SteamId = saved.Friend1SteamId ?? string.Empty;
-                Friend2Name = saved.Friend2Name ?? string.Empty;
-                Friend2SteamId = saved.Friend2SteamId ?? string.Empty;
-                Friend3Name = saved.Friend3Name ?? string.Empty;
-                Friend3SteamId = saved.Friend3SteamId ?? string.Empty;
-                Friend4Name = saved.Friend4Name ?? string.Empty;
-                Friend4SteamId = saved.Friend4SteamId ?? string.Empty;
-                Friend5Name = saved.Friend5Name ?? string.Empty;
-                Friend5SteamId = saved.Friend5SteamId ?? string.Empty;
+
+                FriendSlots = BuildFriendSlots(saved);
+                EnsureFriendSlotsCapacity(5);
+            }
+            else
+            {
+                EnsureFriendSlotsCapacity(5);
             }
         }
 
         public void BeginEdit()
         {
             _editingClone = (FriendsAchievementFeedSettings)MemberwiseClone();
+            _editingClone.FriendSlots = CloneSlots(FriendSlots);
         }
 
         public void CancelEdit()
@@ -354,16 +356,9 @@ namespace FriendsAchievementFeed.Models
                 EnableNotifications = _editingClone.EnableNotifications;
                 NotifyPeriodicUpdates = _editingClone.NotifyPeriodicUpdates;
                 NotifyOnRebuild = _editingClone.NotifyOnRebuild;
-                Friend1Name = _editingClone.Friend1Name;
-                Friend1SteamId = _editingClone.Friend1SteamId;
-                Friend2Name = _editingClone.Friend2Name;
-                Friend2SteamId = _editingClone.Friend2SteamId;
-                Friend3Name = _editingClone.Friend3Name;
-                Friend3SteamId = _editingClone.Friend3SteamId;
-                Friend4Name = _editingClone.Friend4Name;
-                Friend4SteamId = _editingClone.Friend4SteamId;
-                Friend5Name = _editingClone.Friend5Name;
-                Friend5SteamId = _editingClone.Friend5SteamId;
+
+                FriendSlots = CloneSlots(_editingClone.FriendSlots);
+                EnsureFriendSlotsCapacity(5);
             }
         }
 

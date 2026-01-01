@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.Serialization.Json;
 using FriendsAchievementFeed;
 using FriendsAchievementFeed.Models;
 using Playnite.SDK;
@@ -19,17 +18,7 @@ namespace FriendsAchievementFeed.Services
     public sealed class CacheService : ICacheService
     {
         private readonly ILogger _logger;
-        private readonly string _baseDir;
-
-        // Friend feed (global + per-game)
-        private readonly string _friendGlobalPath;   // friend_achievement_cache.json
-        private readonly string _friendPerGameDir;   // friend_achievement_cache/*.json
-
-        // Self achievements
-        private readonly string _selfCacheRootDir;
-
-        // Family sharing
-        private readonly string _familySharingDir;
+        private readonly CacheStorage _storage;
 
         private readonly object _sync = new object();
 
@@ -54,93 +43,7 @@ namespace FriendsAchievementFeed.Services
         public CacheService(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin)
         {
             _logger = logger;
-            if (plugin == null) throw new ArgumentNullException(nameof(plugin));
-
-            _baseDir = plugin.GetPluginUserDataPath();
-            EnsureDir(_baseDir);
-
-            _friendPerGameDir = Path.Combine(_baseDir, "friend_achievement_cache");
-            EnsureDir(_friendPerGameDir);
-
-            _friendGlobalPath = Path.Combine(_baseDir, "friend_achievement_cache.json");
-
-            _selfCacheRootDir = Path.Combine(_baseDir, "self_achievement_cache");
-            EnsureDir(_selfCacheRootDir);
-
-            _familySharingDir = Path.Combine(_baseDir, "family_sharing");
-            // Optional; created on write.
-        }
-
-        // ---------------------------
-        // Atomic JSON
-        // ---------------------------
-
-        private static class AtomicJson
-        {
-            private static DataContractJsonSerializer Create<T>()
-                => new DataContractJsonSerializer(typeof(T),
-                    new DataContractJsonSerializerSettings { UseSimpleDictionaryFormat = true });
-
-            public static T Read<T>(string path) where T : class
-            {
-                try
-                {
-                    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
-                    using (var s = File.OpenRead(path))
-                    {
-                        return Create<T>().ReadObject(s) as T;
-                    }
-                }
-                catch
-                {
-                    return null;
-                }
-            }
-
-            public static void WriteAtomic<T>(string path, T data)
-            {
-                if (string.IsNullOrWhiteSpace(path)) return;
-
-                var dir = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
-
-                var tmp = path + ".tmp";
-                try
-                {
-                    using (var s = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-                    {
-                        Create<T>().WriteObject(s, data);
-                    }
-
-                    if (File.Exists(path))
-                    {
-                        try
-                        {
-                            File.Replace(tmp, path, destinationBackupFileName: null);
-                            return;
-                        }
-                        catch
-                        {
-                            File.Delete(path);
-                        }
-                    }
-
-                    File.Move(tmp, path);
-                }
-                finally
-                {
-                    if (File.Exists(tmp)) File.Delete(tmp);
-                }
-            }
-        }
-
-        private static void EnsureDir(string dir)
-        {
-            if (string.IsNullOrWhiteSpace(dir)) return;
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            _storage = new CacheStorage(plugin, logger);
         }
 
         private static DateTime AsUtc(DateTime dt)
@@ -178,7 +81,7 @@ namespace FriendsAchievementFeed.Services
         {
             try
             {
-                return File.Exists(_friendGlobalPath);
+                return _storage.FriendCacheExists();
             }
             catch
             {
@@ -195,21 +98,21 @@ namespace FriendsAchievementFeed.Services
             }
 
             // Soft optional folders
-            if (string.IsNullOrEmpty(_familySharingDir) || !Directory.Exists(_familySharingDir))
+            if (!Directory.Exists(_storage.FamilySharingDir))
             {
                 _familySharing = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                 _familySharingLoaded = true;
             }
 
-            if (string.IsNullOrEmpty(_selfCacheRootDir) || !Directory.Exists(_selfCacheRootDir))
+            if (!Directory.Exists(_storage.SelfCacheRootDir))
             {
-                EnsureDir(_selfCacheRootDir);
+                _storage.EnsureDir(_storage.SelfCacheRootDir);
                 _selfAchievements = new Dictionary<string, SelfAchievementGameData>(StringComparer.OrdinalIgnoreCase);
             }
 
-            if (string.IsNullOrEmpty(_friendPerGameDir) || !Directory.Exists(_friendPerGameDir))
+            if (!Directory.Exists(_storage.FriendPerGameDir))
             {
-                EnsureDir(_friendPerGameDir);
+                _storage.EnsureDir(_storage.FriendPerGameDir);
                 _perGameFeed = new Dictionary<string, FeedData>(StringComparer.OrdinalIgnoreCase);
             }
 
@@ -260,14 +163,14 @@ namespace FriendsAchievementFeed.Services
         {
             if (_globalFriendFeed != null) return;
 
-            if (!File.Exists(_friendGlobalPath))
+            if (!_storage.FriendCacheExists())
             {
                 _globalFriendFeed = null;
                 _perGameFeed = new Dictionary<string, FeedData>(StringComparer.OrdinalIgnoreCase);
                 return;
             }
 
-            var global = AtomicJson.Read<FeedData>(_friendGlobalPath) ?? new FeedData();
+            var global = _storage.ReadFriendFeed() ?? new FeedData();
             global.LastUpdatedUtc = AsUtc(global.LastUpdatedUtc);
             global.Entries ??= new List<FeedEntry>();
 
@@ -283,28 +186,24 @@ namespace FriendsAchievementFeed.Services
             {
                 if (_globalFriendFeed == null) return;
 
-                EnsureDir(_friendPerGameDir);
+                _storage.EnsureDir(_storage.FriendPerGameDir);
 
                 var expected = BuildPerGameIndex(_globalFriendFeed.Entries, _globalFriendFeed.LastUpdatedUtc);
 
-                var existingFiles = new HashSet<string>(
-                    Directory.Exists(_friendPerGameDir)
-                        ? Directory.EnumerateFiles(_friendPerGameDir, "*.json")
-                        : Enumerable.Empty<string>(),
-                    StringComparer.OrdinalIgnoreCase);
+                var existingFiles = new HashSet<string>(_storage.EnumeratePerGameFiles(), StringComparer.OrdinalIgnoreCase);
 
                 var writtenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var kv in expected)
                 {
-                    var path = Path.Combine(_friendPerGameDir, kv.Key + ".json");
-                    AtomicJson.WriteAtomic(path, kv.Value);
+                    var path = _storage.PerGamePath(kv.Key);
+                    _storage.WritePerGameFeed(kv.Key, kv.Value);
                     writtenFiles.Add(path);
                 }
 
                 foreach (var stale in existingFiles.Except(writtenFiles))
                 {
-                    File.Delete(stale);
+                    _storage.DeleteFileIfExists(stale);
                 }
 
                 _perGameFeed = expected;
@@ -317,7 +216,7 @@ namespace FriendsAchievementFeed.Services
 
         private void SaveFriendFeedToDisk_NoPolicy()
         {
-            EnsureDir(_friendPerGameDir);
+            _storage.EnsureDir(_storage.FriendPerGameDir);
 
             _globalFriendFeed ??= new FeedData
             {
@@ -328,7 +227,7 @@ namespace FriendsAchievementFeed.Services
             _globalFriendFeed.LastUpdatedUtc = AsUtc(_globalFriendFeed.LastUpdatedUtc);
             _globalFriendFeed.Entries ??= new List<FeedEntry>();
 
-            AtomicJson.WriteAtomic(_friendGlobalPath, _globalFriendFeed);
+            _storage.WriteFriendFeed(_globalFriendFeed);
 
             _perGameFeed = BuildPerGameIndex(_globalFriendFeed.Entries, _globalFriendFeed.LastUpdatedUtc);
             TrySyncPerGameFilesToMatchGlobal_NoPolicy();
@@ -432,25 +331,10 @@ namespace FriendsAchievementFeed.Services
             {
                 ClearAllMemory_NoEvent();
 
-                if (File.Exists(_friendGlobalPath)) File.Delete(_friendGlobalPath);
-
-                if (Directory.Exists(_friendPerGameDir))
-                {
-                    foreach (var f in Directory.EnumerateFiles(_friendPerGameDir, "*.json"))
-                    {
-                        File.Delete(f);
-                    }
-                }
-
-                if (Directory.Exists(_selfCacheRootDir))
-                {
-                    Directory.Delete(_selfCacheRootDir, true);
-                }
-
-                if (Directory.Exists(_familySharingDir))
-                {
-                    Directory.Delete(_familySharingDir, true);
-                }
+                _storage.DeleteFileIfExists(_storage.FriendGlobalPath);
+                _storage.DeleteDirectoryIfExists(_storage.FriendPerGameDir);
+                _storage.DeleteDirectoryIfExists(_storage.SelfCacheRootDir);
+                _storage.DeleteDirectoryIfExists(_storage.FamilySharingDir);
             }
 
             RaiseCacheChangedSafe();
@@ -463,7 +347,7 @@ namespace FriendsAchievementFeed.Services
         // Perf improvement: skip disk writes if no changes; keep deterministic ordering.
         // ---------------------------
 
-        private string FamilySharingPath(string playniteGameId) => Path.Combine(_familySharingDir, playniteGameId + ".json");
+        private string FamilySharingPath(string playniteGameId) => _storage.FamilyPath(playniteGameId);
 
         private static List<string> NormalizeSteamIds(IEnumerable<string> ids)
         {
@@ -481,14 +365,15 @@ namespace FriendsAchievementFeed.Services
 
             var map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
-            if (!Directory.Exists(_familySharingDir))
+            var files = _storage.EnumerateFamilyFiles()?.ToList();
+            if (files == null || files.Count == 0)
             {
                 _familySharing = map;
                 _familySharingLoaded = true;
                 return;
             }
 
-            foreach (var f in Directory.EnumerateFiles(_familySharingDir, "*.json"))
+            foreach (var f in files)
             {
                 var key = Path.GetFileNameWithoutExtension(f);
                 if (string.IsNullOrWhiteSpace(key)) continue;
@@ -497,7 +382,7 @@ namespace FriendsAchievementFeed.Services
                 if (!Guid.TryParse(key, out _))
                     continue;
 
-                var data = AtomicJson.Read<FamilySharingScanResult>(f);
+                var data = _storage.ReadFamily(f);
                 if (data?.SteamIds != null && data.SteamIds.Count > 0)
                 {
                     var normalized = NormalizeSteamIds(data.SteamIds);
@@ -531,7 +416,7 @@ namespace FriendsAchievementFeed.Services
 
             lock (_sync)
             {
-                EnsureDir(_familySharingDir);
+                _storage.EnsureDir(_storage.FamilySharingDir);
                 EnsureFamilySharingLoaded_NoPolicy();
 
                 foreach (var kv in results)
@@ -565,7 +450,7 @@ namespace FriendsAchievementFeed.Services
                         continue;
                     }
 
-                    AtomicJson.WriteAtomic(FamilySharingPath(playniteGameId), new FamilySharingScanResult
+                    _storage.WriteFamily(playniteGameId, new FamilySharingScanResult
                     {
                         LastUpdatedUtc = DateTime.UtcNow,
                         SteamIds = mergedList
@@ -581,7 +466,6 @@ namespace FriendsAchievementFeed.Services
         // ---------------------------
 
         private string SelfKey(string key) => key?.Trim() ?? string.Empty;
-        private string SelfPath(string key) => Path.Combine(_selfCacheRootDir, SelfKey(key) + ".json");
 
         public SelfAchievementGameData LoadSelfAchievementData(string key)
         {
@@ -597,8 +481,7 @@ namespace FriendsAchievementFeed.Services
                     if (_selfAchievements.TryGetValue(k, out var cached) && cached != null)
                         return cached;
 
-                    var path = SelfPath(k);
-                    var disk = AtomicJson.Read<SelfAchievementGameData>(path);
+                    var disk = _storage.ReadSelf(k);
                     if (disk != null)
                     {
                         disk.LastUpdatedUtc = AsUtc(disk.LastUpdatedUtc);
@@ -623,13 +506,11 @@ namespace FriendsAchievementFeed.Services
 
                 lock (_sync)
                 {
-                    EnsureDir(_selfCacheRootDir);
-
                     var toWrite = data ?? new SelfAchievementGameData();
                     toWrite.LastUpdatedUtc = AsUtc(toWrite.LastUpdatedUtc);
 
                     var k = SelfKey(key);
-                    AtomicJson.WriteAtomic(SelfPath(k), toWrite);
+                    _storage.WriteSelf(k, toWrite);
 
                     _selfAchievements[k] = toWrite;
                     RaiseCacheChangedSafe();

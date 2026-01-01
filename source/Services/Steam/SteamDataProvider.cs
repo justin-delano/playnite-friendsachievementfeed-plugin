@@ -114,17 +114,17 @@ namespace FriendsAchievementFeed.Services
                 var resolved = await ResolveSteamId64Async(steamUserId, CancellationToken.None).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(resolved))
                 {
-                    return (false, "Steam session not found. Please authenticate (plugin auth) and retry.");
+                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamSessionNotFound"));
                 }
 
                 var page = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
                 var html = page?.Html ?? string.Empty;
 
                 if ((int)(page?.StatusCode ?? 0) == 429)
-                    return (false, "Steam rate-limited (429). Try again later.");
+                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamRateLimited"));
 
                 if (string.IsNullOrWhiteSpace(html))
-                    return (false, "No profile returned.");
+                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_NoProfileReturned"));
 
                 if (SteamClient.LooksLoggedOutHeader(html))
                 {
@@ -134,14 +134,14 @@ namespace FriendsAchievementFeed.Services
                     html = page2?.Html ?? string.Empty;
 
                     if ((int)(page2?.StatusCode ?? 0) == 429)
-                        return (false, "Steam rate-limited (429). Try again later.");
+                        return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamRateLimited"));
 
                     if (string.IsNullOrWhiteSpace(html) || SteamClient.LooksLoggedOutHeader(html))
-                        return (false, "Steam cookies appear invalid (still logged out after refresh).");
+                        return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamCookiesInvalid"));
                 }
 
                 if (html.IndexOf("actual_persona_name", StringComparison.OrdinalIgnoreCase) < 0)
-                    return (false, "Steam profile markers not found.");
+                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamProfileMarkersNotFound"));
 
                 var okMsg = ResourceProvider.GetString("LOCFriendsAchFeed_Settings_SteamAuth_OK") ?? "Steam auth OK";
                 return (true, okMsg);

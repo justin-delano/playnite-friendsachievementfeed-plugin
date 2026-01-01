@@ -23,6 +23,8 @@ namespace FriendsAchievementFeed.Views
             _logic = new FeedControlLogic(api, settings, logger, feedService);
             InitializeComponent();
             MainControl.Logic = _logic;
+            MainControl.DisposeLogicOnUnload = true;
+            DataContext = _logic;
         }
         private void GameClearButton_Click(object sender, RoutedEventArgs e)
         {

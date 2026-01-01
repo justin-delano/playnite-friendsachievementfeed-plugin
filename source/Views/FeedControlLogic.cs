@@ -374,26 +374,14 @@ namespace FriendsAchievementFeed.Views
                     {
                         _authValid = false;
                         _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
-                        RunOnUi(() =>
-                        {
-                            OnPropertyChanged(nameof(SteamReady));
-                            OnPropertyChanged(nameof(SteamAuthMessage));
-                            UpdateStatusCount();
-                            NotifyCommandsChanged();
-                        });
+                        UpdateAuthBindings();
                         return;
                     }
 
                     // Indicate we're checking
                     _authValid = null;
                     _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Settings_CheckingSteamAuth") ?? "Checking Steam authentication...";
-                    RunOnUi(() =>
-                    {
-                        OnPropertyChanged(nameof(SteamReady));
-                        OnPropertyChanged(nameof(SteamAuthMessage));
-                        UpdateStatusCount();
-                        NotifyCommandsChanged();
-                    });
+                    UpdateAuthBindings();
 
                     // Validate Steam cookies/profile presence (and anything else your service checks)
                     var result = await _feedService.TestSteamAuthAsync().ConfigureAwait(false);
@@ -402,13 +390,7 @@ namespace FriendsAchievementFeed.Views
                     _authValid = result.Success;
                     _authMessage = result.Message;
 
-                    RunOnUi(() =>
-                    {
-                        OnPropertyChanged(nameof(SteamReady));
-                        OnPropertyChanged(nameof(SteamAuthMessage));
-                        UpdateStatusCount();
-                        NotifyCommandsChanged();
-                    });
+                    UpdateAuthBindings();
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex)
@@ -416,13 +398,7 @@ namespace FriendsAchievementFeed.Views
                     _logger?.Error(ex, "Error validating Steam auth settings.");
                     _authValid = false;
                     _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured") ?? "Steam not configured.";
-                    RunOnUi(() =>
-                    {
-                        OnPropertyChanged(nameof(SteamReady));
-                        OnPropertyChanged(nameof(SteamAuthMessage));
-                        UpdateStatusCount();
-                        NotifyCommandsChanged();
-                    });
+                    UpdateAuthBindings();
                 }
             }, token);
         }
@@ -438,6 +414,17 @@ namespace FriendsAchievementFeed.Views
             {
                 action();
             }
+        }
+
+        private void UpdateAuthBindings()
+        {
+            RunOnUi(() =>
+            {
+                OnPropertyChanged(nameof(SteamReady));
+                OnPropertyChanged(nameof(SteamAuthMessage));
+                UpdateStatusCount();
+                NotifyCommandsChanged();
+            });
         }
 
         private void InitializeView()
@@ -914,12 +901,12 @@ namespace FriendsAchievementFeed.Views
             {
                 try
                 {
-                    _api?.Dialogs?.ShowErrorMessage(message, "Friends Achievement Feed");
+                    _api?.Dialogs?.ShowErrorMessage(message, ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"));
                 }
                 catch
                 {
                     // last resort fallback
-                    try { MessageBox.Show(message, "Friends Achievement Feed", MessageBoxButton.OK, MessageBoxImage.Error); }
+                    try { MessageBox.Show(message, ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"), MessageBoxButton.OK, MessageBoxImage.Error); }
                     catch { /* swallow */ }
                 }
             });
@@ -934,13 +921,7 @@ namespace FriendsAchievementFeed.Views
                 _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured")
                               ?? "Steam API key / user id not configured.";
 
-                RunOnUi(() =>
-                {
-                    OnPropertyChanged(nameof(SteamReady));
-                    OnPropertyChanged(nameof(SteamAuthMessage));
-                    UpdateStatusCount();
-                    NotifyCommandsChanged();
-                });
+                UpdateAuthBindings();
 
                 if (showDialog) ShowAuthDialogOnce(_authMessage);
                 return false;
@@ -955,17 +936,11 @@ namespace FriendsAchievementFeed.Views
             _authValid = result.Success;
             _authMessage = result.Message;
 
-            RunOnUi(() =>
-            {
-                OnPropertyChanged(nameof(SteamReady));
-                OnPropertyChanged(nameof(SteamAuthMessage));
-                UpdateStatusCount();
-                NotifyCommandsChanged();
-            });
+            UpdateAuthBindings();
 
             if (!result.Success && showDialog)
             {
-                ShowAuthDialogOnce(_authMessage ?? "Steam web authentication is not available.");
+                ShowAuthDialogOnce(_authMessage ?? ResourceProvider.GetString("LOCFriendsAchFeed_Settings_SteamAuth_WebAuthUnavailable"));
             }
 
             return result.Success;
@@ -985,7 +960,7 @@ namespace FriendsAchievementFeed.Views
                     RunOnUi(() =>
                     {
                         try { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_LoadingFromCache"); }
-                        catch { StatusMessage = "Loading…"; }
+                        catch { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_LoadingFromCache") ?? "Loading…"; }
                     });
 
                     await ReloadFromCacheToUiAsync(fromRebuild: false, token).ConfigureAwait(false);
@@ -1007,7 +982,7 @@ namespace FriendsAchievementFeed.Views
                     RunOnUi(() =>
                     {
                         try { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_NoCache_Building"); }
-                        catch { StatusMessage = "Building cache…"; }
+                        catch { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_NoCache_Building") ?? "Building cache…"; }
                     });
 
                     await TriggerRebuild(null, token).ConfigureAwait(false);
@@ -1078,7 +1053,7 @@ namespace FriendsAchievementFeed.Views
                     hasReg = true;
                 }
 
-                await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
+                await _feedService.StartManagedRebuildAsync(options).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

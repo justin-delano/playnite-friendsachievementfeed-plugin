@@ -55,16 +55,7 @@ namespace FriendsAchievementFeed.Views
                 _logic.GameIdProvider = () => _gameContext?.Id;
                 _logic.NotifyCommandsChanged();
 
-                try
-                {
-                    var h = _pluginSettings?.GameFeedTabHeight ?? 1000;
-                    MainControl.Height = h > 0 ? h : 1000;
-                    MainControl.Margin = new Thickness(0, 8, 0, 0);
-                }
-                catch
-                {
-                    // ignore if MainControl isn't available yet for some reason
-                }
+                ApplyGameViewLayout();
             }
         }
 

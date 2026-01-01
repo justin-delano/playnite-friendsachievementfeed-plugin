@@ -5,13 +5,14 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="clr-namespace:Playnite.SDK.Controls;assembly=Playnite.SDK"
     xmlns:local="clr-namespace:FriendsAchievementFeed.Views.Shared"
+    xmlns:conv="clr-namespace:FriendsAchievementFeed.Views.Converters"
     xmlns:svc="clr-namespace:FriendsAchievementFeed.Services"
     mc:Ignorable="d"
     d:DesignHeight="600"
     d:DesignWidth="800">
 
     <controls:PluginUserControl.Resources>
-        <local:UtcToLocalConverter x:Key="UtcToLocalConverter" />
+        <conv:UtcToLocalConverter x:Key="UtcToLocalConverter" />
     </controls:PluginUserControl.Resources>
 
     <Grid Margin="12">
@@ -86,57 +87,25 @@
 
             <Grid Grid.Row="1"
                 Grid.Column="1"
-                Margin="50,0,0,0"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Center">
+                Margin="12,0,16,0"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Center">
 
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <!-- Row 0: buttons -->
-                <Button x:Name="RefreshButton"
-                        Grid.Row="0"
-                        Grid.Column="0"
-                        Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh}"
-                        Focusable="False"
-                        FontSize="12"
-                        Width="100"
-                        Margin="0,0,10,0"
-                        ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip}"
-                        Command="{Binding TriggerRebuildCommand}"
-                        Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
-
-                <Button x:Name="CancelRebuildButton"
-                        Grid.Row="0"
-                        Grid.Column="1"
-                        Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel}"
-                        Focusable="False"
-                        FontSize="12"
-                        Width="100"
-                        Margin="0,0,50,0"
-                        ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip}"
-                        Command="{Binding CancelRebuildCommand}"
-                        Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
-
-                <!-- Row 1: filler slot UNDER Refresh only -->
-                    <ContentControl Grid.Row="1"
-                                Grid.Column="0"
-                                Margin="0,5,0,0"
+                <!-- Single row: three aligned actions -->
+                <ContentControl Grid.Column="0"
+                                Margin="0,0,6,0"
                                 Focusable="False"
                                 FontSize="12"
                                 HorizontalAlignment="Left"
                                 Width="{Binding ElementName=RefreshButton, Path=ActualWidth}"
                                 Content="{Binding ExtraRebuildContent,
                                                 RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}">
-
-                    <!-- Auto-collapse when empty -->
                     <ContentControl.Style>
                         <Style TargetType="ContentControl">
                             <Setter Property="Visibility" Value="Visible" />
@@ -148,6 +117,28 @@
                         </Style>
                     </ContentControl.Style>
                 </ContentControl>
+
+                <Button x:Name="RefreshButton"
+                        Grid.Column="1"
+                        Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh}"
+                        Focusable="False"
+                        FontSize="12"
+                        Width="110"
+                        Margin="0,0,6,0"
+                        ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip}"
+                        Command="{Binding TriggerRebuildCommand}"
+                        Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
+
+                <Button x:Name="CancelRebuildButton"
+                        Grid.Column="2"
+                        Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel}"
+                        Focusable="False"
+                        FontSize="12"
+                        Width="110"
+                        Margin="0,0,0,0"
+                        ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip}"
+                        Command="{Binding CancelRebuildCommand}"
+                        Height="{Binding ElementName=FriendFilterCombo, Path=ActualHeight}" />
 
             </Grid>
 

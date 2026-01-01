@@ -25,8 +25,9 @@ namespace FriendsAchievementFeed
 
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly AchievementFeedService _feedService;
+        private readonly NotificationPublisher _notifications;
 
-        private CancellationTokenSource _backgroundCts;
+        private readonly BackgroundUpdateService _backgroundUpdates;
 
         // Startup gate: ensure SteamID64 persistence happens BEFORE anything else.
         private readonly object _startupInitLock = new object();
@@ -49,6 +50,8 @@ namespace FriendsAchievementFeed
             };
 
             _feedService = new AchievementFeedService(api, _settings, _logger, this);
+            _notifications = new NotificationPublisher(api, _settings, _logger);
+            _backgroundUpdates = new BackgroundUpdateService(_feedService, _settings, _logger, _notifications, UpdateGameFeedGroupsForCurrentGame);
 
             // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
@@ -122,12 +125,7 @@ namespace FriendsAchievementFeed
                     // ForceScanAllSteamLibraryGames = true
                 };
 
-                opts.FamilySharingFriendIDs = new List<string>();
-                if (!string.IsNullOrWhiteSpace(_settings?.Friend1SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend1SteamId);
-                if (!string.IsNullOrWhiteSpace(_settings?.Friend2SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend2SteamId);
-                if (!string.IsNullOrWhiteSpace(_settings?.Friend3SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend3SteamId);
-                if (!string.IsNullOrWhiteSpace(_settings?.Friend4SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend4SteamId);
-                if (!string.IsNullOrWhiteSpace(_settings?.Friend5SteamId)) opts.FamilySharingFriendIDs.Add(_settings.Friend5SteamId);
+                opts.FamilySharingFriendIDs = _settings.GetConfiguredFriendIds().ToList();
 
                 // Blocking, cancellable progress dialog
                 PlayniteApi.Dialogs.ActivateGlobalProgress(async a =>
@@ -284,7 +282,7 @@ namespace FriendsAchievementFeed
             }
             catch { }
 
-            StopBackgroundUpdateLoop();
+            _backgroundUpdates.Stop();
         }
 
         private void EnsureStartupInitialized()
@@ -310,7 +308,7 @@ namespace FriendsAchievementFeed
                         await PlayniteApi.MainView.UIDispatcher.InvokeAsync(() =>
                         {
                             InitializeHasGameFeedGroups();
-                            StartBackgroundUpdateLoop();
+                            _backgroundUpdates.Start();
                         });
                     }
                     catch (Exception ex)
@@ -332,17 +330,6 @@ namespace FriendsAchievementFeed
             {
                 _logger.Error(ex, "Failed to initialize HasGameFeedGroups on startup.");
             }
-        }
-
-        private void StartBackgroundUpdateLoop()
-        {
-            _backgroundCts = new CancellationTokenSource();
-            var token = _backgroundCts.Token;
-
-            Task.Run(async () =>
-            {
-                await PeriodicUpdateLoop(token).ConfigureAwait(false);
-            }, token);
         }
 
         private async Task PersistSelfSteamId64OnStartupAsync(CancellationToken token)
@@ -405,99 +392,6 @@ namespace FriendsAchievementFeed
             _logger.Debug("[FAF] SteamID64 not detected on startup (user may not be logged into Steam via Playnite web login yet).");
         }
 
-        private async Task PeriodicUpdateLoop(CancellationToken token)
-        {
-            var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
-
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
-                    await PerformUpdateIfNeeded(interval, token).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "[PeriodicUpdate] Unexpected error in periodic update loop");
-                }
-
-                await DelayNextUpdate(interval, token).ConfigureAwait(false);
-            }
-        }
-
-        private async Task PerformUpdateIfNeeded(TimeSpan interval, CancellationToken token)
-        {
-            if (ShouldPerformUpdate(interval))
-            {
-                await ExecuteDeltaUpdate(token).ConfigureAwait(false);
-            }
-            else
-            {
-                _logger.Debug("[PeriodicUpdate] Cache is recent; skipping update.");
-            }
-        }
-
-        private bool ShouldPerformUpdate(TimeSpan interval)
-        {
-            var cacheLast = _feedService.GetCacheLastUpdated();
-            _logger.Debug($"[PeriodicUpdate] Cache valid={_feedService.IsCacheValid()}, lastUpdatedUtc={cacheLast?.ToString() ?? "(none)"}");
-
-            return _settings.EnablePeriodicUpdates &&
-                   (!_feedService.IsCacheValid() ||
-                    !cacheLast.HasValue ||
-                    DateTime.UtcNow - cacheLast.Value >= interval);
-        }
-
-        /// <summary>
-        /// Delta-only cache update (works for first build too).
-        /// </summary>
-        private async Task ExecuteDeltaUpdate(CancellationToken token)
-        {
-            _logger.Debug("[PeriodicUpdate] Triggering delta cache update...");
-
-            try
-            {
-                await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
-
-                _logger.Debug("[PeriodicUpdate] Delta cache update completed.");
-                HandleUpdateCompletion();
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                // Graceful shutdown
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "[PeriodicUpdate] Failed to perform delta update");
-            }
-        }
-
-        private void HandleUpdateCompletion()
-        {
-            ShowPeriodicUpdateNotification();
-            UpdateGameFeedGroupsForCurrentGame();
-        }
-
-        private void ShowPeriodicUpdateNotification()
-        {
-            if (_settings?.EnableNotifications == true && _settings.NotifyPeriodicUpdates)
-            {
-                var lastStatus = _feedService.GetLastRebuildStatus() ?? ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Completed");
-                var message = $"{ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName")}\n{lastStatus}";
-
-                try
-                {
-                    PlayniteApi.Notifications.Add(new NotificationMessage(
-                        $"FriendsAchievementFeed-Periodic-{Guid.NewGuid()}",
-                        message,
-                        NotificationType.Info));
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "Failed to show periodic notification.");
-                }
-            }
-        }
-
         private void UpdateGameFeedGroupsForCurrentGame()
         {
             try
@@ -508,33 +402,6 @@ namespace FriendsAchievementFeed
             catch (Exception ex)
             {
                 _logger.Error(ex, "[PeriodicUpdate] Failed to update HasGameFeedGroups after cache rebuild.");
-            }
-        }
-
-        private async Task DelayNextUpdate(TimeSpan interval, CancellationToken token)
-        {
-            try
-            {
-                await Task.Delay(interval, token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                // Loop will terminate
-            }
-        }
-
-        private void StopBackgroundUpdateLoop()
-        {
-            try
-            {
-                _backgroundCts?.Cancel();
-                _feedService?.CancelActiveRebuild();
-                _backgroundCts?.Dispose();
-                _backgroundCts = null;
-            }
-            catch
-            {
-                // ignore shutdown errors
             }
         }
 

@@ -45,6 +45,19 @@ namespace FriendsAchievementFeed.Views
             set => SetValue(SteamAuthBusyProperty, value);
         }
 
+        public static readonly DependencyProperty FriendsProperty =
+            DependencyProperty.Register(
+                nameof(Friends),
+                typeof(IEnumerable<SteamFriend>),
+                typeof(SettingsControl),
+                new PropertyMetadata(null));
+
+        public IEnumerable<SteamFriend> Friends
+        {
+            get => (IEnumerable<SteamFriend>)GetValue(FriendsProperty);
+            set => SetValue(FriendsProperty, value);
+        }
+
         private readonly FriendsAchievementFeedPlugin _plugin;
         private readonly SteamClient _steam;
         private List<SteamFriend> _friends = new List<SteamFriend>();
@@ -84,7 +97,7 @@ namespace FriendsAchievementFeed.Views
             try
             {
                 var (ok, msg) = await _steam.AuthenticateInteractiveAsync(CancellationToken.None).ConfigureAwait(true);
-                SteamAuthStatus = $"Steam: {msg}";
+                SteamAuthStatus = SteamStatusHelper.AuthMessage(msg);
 
                 await CheckSteamAuthAsync(diskOnly: false).ConfigureAwait(true);
                 await LoadFriendsAsync().ConfigureAwait(true);
@@ -92,7 +105,7 @@ namespace FriendsAchievementFeed.Views
             catch (Exception ex)
             {
                 _logger?.Error(ex, "[FAF] Steam Authenticate failed.");
-                SteamAuthStatus = $"Steam: Authenticate failed: {ex.Message}";
+                SteamAuthStatus = SteamStatusHelper.AuthFailed(ex.Message);
             }
             finally
             {
@@ -105,12 +118,12 @@ namespace FriendsAchievementFeed.Views
             try
             {
                 _steam.ClearSavedCookies();
-                SteamAuthStatus = "Steam: Cleared saved session. Click Authenticate.";
+                SteamAuthStatus = SteamStatusHelper.Cleared();
             }
             catch (Exception ex)
             {
                 _logger?.Error(ex, "[FAF] Steam ClearSavedCookies failed.");
-                SteamAuthStatus = $"Steam: Clear failed: {ex.Message}";
+                SteamAuthStatus = SteamStatusHelper.ClearFailed(ex.Message);
             }
         }
 
@@ -125,13 +138,13 @@ namespace FriendsAchievementFeed.Views
                 var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
                 if (string.IsNullOrWhiteSpace(self))
                 {
-                    SteamAuthStatus = "Steam: Not authenticated (no saved session). Click Authenticate.";
+                    SteamAuthStatus = SteamStatusHelper.NotAuthenticated();
                     return;
                 }
 
                 if (diskOnly)
                 {
-                    SteamAuthStatus = $"Steam: Session found (SteamID {self}).";
+                    SteamAuthStatus = SteamStatusHelper.SessionFound(self);
                     return;
                 }
 
@@ -139,29 +152,29 @@ namespace FriendsAchievementFeed.Views
 
                 if ((int)page.StatusCode == 429)
                 {
-                    SteamAuthStatus = "Steam: Rate-limited (429). Try again later.";
+                    SteamAuthStatus = SteamStatusHelper.AuthMessage("Rate-limited (429). Try again later.");
                     return;
                 }
 
                 var html = page?.Html ?? "";
                 if (string.IsNullOrWhiteSpace(html))
                 {
-                    SteamAuthStatus = "Steam: No profile returned (network issue?).";
+                    SteamAuthStatus = SteamStatusHelper.AuthMessage("No profile returned (network issue?).");
                     return;
                 }
 
                 if (SteamClient.LooksLoggedOutHeader(html))
                 {
-                    SteamAuthStatus = "Steam: Saved cookies appear logged out. Click Authenticate.";
+                    SteamAuthStatus = SteamStatusHelper.AuthMessage("Saved cookies appear logged out. Click Authenticate.");
                     return;
                 }
 
-                SteamAuthStatus = $"Steam: Auth OK (SteamID {self}).";
+                SteamAuthStatus = SteamStatusHelper.AuthMessage($"Auth OK (SteamID {self}).");
             }
             catch (Exception ex)
             {
                 _logger?.Error(ex, "[FAF] Steam auth check failed.");
-                SteamAuthStatus = $"Steam: Auth check failed: {ex.Message}";
+                SteamAuthStatus = SteamStatusHelper.AuthFailed(ex.Message);
             }
             finally
             {
@@ -220,12 +233,12 @@ namespace FriendsAchievementFeed.Views
         {
             try
             {
-                FriendsStatusText.Text = "Loading friends…";
+                FriendsStatusText.Text = ResourceProvider.GetString("LOCFriendsAchFeed_Progress_LoadingFriends") ?? "Loading friends…";
 
                 var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
                 if (string.IsNullOrWhiteSpace(self))
                 {
-                    FriendsStatusText.Text = "Authenticate with Steam (General tab) to load friends.";
+                    FriendsStatusText.Text = ResourceProvider.GetString("LOCFriendsAchFeed_Info_AuthenticateWithSteam") ?? "Authenticate with Steam (General tab) to load friends.";
                     return;
                 }
 
@@ -240,40 +253,17 @@ namespace FriendsAchievementFeed.Views
 
                 Dispatcher.Invoke(() =>
                 {
-                    FriendCombo1.ItemsSource = _friends;
-                    FriendCombo2.ItemsSource = _friends;
-                    FriendCombo3.ItemsSource = _friends;
-                    FriendCombo4.ItemsSource = _friends;
-                    FriendCombo5.ItemsSource = _friends;
-
-                    SelectComboBySteamId(FriendCombo1, _plugin.Settings.Friend1SteamId);
-                    SelectComboBySteamId(FriendCombo2, _plugin.Settings.Friend2SteamId);
-                    SelectComboBySteamId(FriendCombo3, _plugin.Settings.Friend3SteamId);
-                    SelectComboBySteamId(FriendCombo4, _plugin.Settings.Friend4SteamId);
-                    SelectComboBySteamId(FriendCombo5, _plugin.Settings.Friend5SteamId);
+                    Friends = _friends;
 
                     FriendsStatusText.Text = _friends.Count > 0
-                        ? $"Loaded {_friends.Count} friends."
-                        : "No friends found or profile private.";
+                        ? string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Info_LoadedFriends") ?? "Loaded {0} friends.", _friends.Count)
+                        : ResourceProvider.GetString("LOCFriendsAchFeed_Info_NoFriends") ?? "No friends found or profile private.";
                 });
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() => FriendsStatusText.Text = "Failed to load friends: " + ex.Message);
+                Dispatcher.Invoke(() => FriendsStatusText.Text = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedLoadFriends") ?? "Failed to load friends: {0}", ex.Message));
             }
-        }
-
-        private void SelectComboBySteamId(ComboBox cb, string steamId)
-        {
-            if (cb == null) return;
-            if (string.IsNullOrWhiteSpace(steamId))
-            {
-                cb.SelectedItem = null;
-                return;
-            }
-
-            var match = _friends.FirstOrDefault(f => string.Equals(f.SteamId, steamId, StringComparison.OrdinalIgnoreCase));
-            if (match != null) cb.SelectedItem = match;
         }
 
         private async void TabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -304,33 +294,25 @@ namespace FriendsAchievementFeed.Views
 
             var sel = cb.SelectedItem as SteamFriend;
 
-            if (cb.Name == "FriendCombo1")
+            var index = cb.Tag is int tagIndex ? tagIndex : ParseIndexFromName(cb.Name);
+
+            if (index >= 0)
             {
-                _plugin.Settings.Friend1SteamId = sel?.SteamId ?? string.Empty;
-                _plugin.Settings.Friend1Name = sel?.PersonaName ?? string.Empty;
-            }
-            else if (cb.Name == "FriendCombo2")
-            {
-                _plugin.Settings.Friend2SteamId = sel?.SteamId ?? string.Empty;
-                _plugin.Settings.Friend2Name = sel?.PersonaName ?? string.Empty;
-            }
-            else if (cb.Name == "FriendCombo3")
-            {
-                _plugin.Settings.Friend3SteamId = sel?.SteamId ?? string.Empty;
-                _plugin.Settings.Friend3Name = sel?.PersonaName ?? string.Empty;
-            }
-            else if (cb.Name == "FriendCombo4")
-            {
-                _plugin.Settings.Friend4SteamId = sel?.SteamId ?? string.Empty;
-                _plugin.Settings.Friend4Name = sel?.PersonaName ?? string.Empty;
-            }
-            else if (cb.Name == "FriendCombo5")
-            {
-                _plugin.Settings.Friend5SteamId = sel?.SteamId ?? string.Empty;
-                _plugin.Settings.Friend5Name = sel?.PersonaName ?? string.Empty;
+                _plugin.Settings.SetFriendSlot(index, sel?.PersonaName ?? string.Empty, sel?.SteamId ?? string.Empty);
             }
 
             _plugin.Settings.EndEdit();
+        }
+
+        private int ParseIndexFromName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return -1;
+            if (name.StartsWith("FriendCombo", StringComparison.OrdinalIgnoreCase) && int.TryParse(name.Substring("FriendCombo".Length), out var n))
+            {
+                return Math.Max(0, n - 1);
+            }
+
+            return -1;
         }
 
         private void FamilyScan_Click(object sender, RoutedEventArgs e)
@@ -338,16 +320,11 @@ namespace FriendsAchievementFeed.Views
             try
             {
                 var opts = new CacheRebuildOptions();
-                opts.FamilySharingFriendIDs = new List<string>();
-                if (!string.IsNullOrWhiteSpace(_plugin.Settings.Friend1SteamId)) opts.FamilySharingFriendIDs.Add(_plugin.Settings.Friend1SteamId);
-                if (!string.IsNullOrWhiteSpace(_plugin.Settings.Friend2SteamId)) opts.FamilySharingFriendIDs.Add(_plugin.Settings.Friend2SteamId);
-                if (!string.IsNullOrWhiteSpace(_plugin.Settings.Friend3SteamId)) opts.FamilySharingFriendIDs.Add(_plugin.Settings.Friend3SteamId);
-                if (!string.IsNullOrWhiteSpace(_plugin.Settings.Friend4SteamId)) opts.FamilySharingFriendIDs.Add(_plugin.Settings.Friend4SteamId);
-                if (!string.IsNullOrWhiteSpace(_plugin.Settings.Friend5SteamId)) opts.FamilySharingFriendIDs.Add(_plugin.Settings.Friend5SteamId);
+                opts.FamilySharingFriendIDs = _plugin.Settings.GetConfiguredFriendIds().ToList();
 
                 _plugin.PlayniteApi.Dialogs.ActivateGlobalProgress(async a =>
                 {
-                    a.Text = "Starting family-sharing scan…";
+                    a.Text = ResourceProvider.GetString("LOCFriendsAchFeed_Progress_FamilySharing_Start") ?? "Starting family-sharing scan…";
                     a.IsIndeterminate = true;
 
                     using var cancelReg = a.CancelToken.Register(() => _plugin.FeedService.CancelActiveRebuild());
@@ -377,57 +354,24 @@ namespace FriendsAchievementFeed.Views
                     {
                         _plugin.FeedService.RebuildProgress -= handler;
                     }
-                }, new GlobalProgressOptions("Friends Achievement Feed — Family Sharing Scan") { IsIndeterminate = true, Cancelable = true });
+                }, new GlobalProgressOptions(ResourceProvider.GetString("LOCFriendsAchFeed_Progress_FamilySharing_Title") ?? "Friends Achievement Feed — Family Sharing Scan") { IsIndeterminate = true, Cancelable = true });
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Failed to start family-sharing scan: " + ex.Message);
+                MessageBox.Show(string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FamilySharingStartFailed") ?? "Failed to start family-sharing scan: {0}", ex.Message));
             }
         }
 
-        private void ClearFriend1_Click(object sender, RoutedEventArgs e)
+        private void ClearFriend_Click(object sender, RoutedEventArgs e)
         {
-            _plugin.Settings.Friend1SteamId = string.Empty;
-            _plugin.Settings.Friend1Name = string.Empty;
+            if (sender is not FrameworkElement fe) return;
+
+            var index = fe.Tag is int tagIndex ? tagIndex : -1;
+            if (index < 0) return;
+
+            _plugin.Settings.SetFriendSlot(index, string.Empty, string.Empty);
             _plugin.Settings.EndEdit();
-            FriendCombo1.SelectedItem = null;
-            FriendCombo1.Text = string.Empty;
         }
 
-        private void ClearFriend2_Click(object sender, RoutedEventArgs e)
-        {
-            _plugin.Settings.Friend2SteamId = string.Empty;
-            _plugin.Settings.Friend2Name = string.Empty;
-            _plugin.Settings.EndEdit();
-            FriendCombo2.SelectedItem = null;
-            FriendCombo2.Text = string.Empty;
-        }
-
-        private void ClearFriend3_Click(object sender, RoutedEventArgs e)
-        {
-            _plugin.Settings.Friend3SteamId = string.Empty;
-            _plugin.Settings.Friend3Name = string.Empty;
-            _plugin.Settings.EndEdit();
-            FriendCombo3.SelectedItem = null;
-            FriendCombo3.Text = string.Empty;
-        }
-
-        private void ClearFriend4_Click(object sender, RoutedEventArgs e)
-        {
-            _plugin.Settings.Friend4SteamId = string.Empty;
-            _plugin.Settings.Friend4Name = string.Empty;
-            _plugin.Settings.EndEdit();
-            FriendCombo4.SelectedItem = null;
-            FriendCombo4.Text = string.Empty;
-        }
-
-        private void ClearFriend5_Click(object sender, RoutedEventArgs e)
-        {
-            _plugin.Settings.Friend5SteamId = string.Empty;
-            _plugin.Settings.Friend5Name = string.Empty;
-            _plugin.Settings.EndEdit();
-            FriendCombo5.SelectedItem = null;
-            FriendCombo5.Text = string.Empty;
-        }
     }
 }
