@@ -430,16 +430,51 @@
                                                     Margin="8,0,8,0"
                                                     VerticalAlignment="Center">
 
-                                                    <ToggleButton IsChecked="{Binding IsRevealed, Mode=TwoWay}"
-                                                            IsHitTestVisible="False"
-                                                            Background="Transparent"
-                                                            BorderThickness="0"
-                                                            Padding="0"
-                                                            Focusable="False">
-                                                        <Image Stretch="Uniform"
-                                                            VerticalAlignment="Center"
-                                                            Source="{Binding DisplayIcon}" />
-                                                    </ToggleButton>
+                                                    <!-- Keep both icons loaded and just flip visibility to avoid flicker on reveal toggle. -->
+                                                    <Image x:Name="HiddenIcon"
+                                                           Stretch="Uniform"
+                                                           VerticalAlignment="Center"
+                                                           Source="{Binding SelfAchievementIconResolved}">
+                                                        <Image.Style>
+                                                            <Style TargetType="Image">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding CanReveal}" Value="True" />
+                                                                            <Condition Binding="{Binding IsRevealed}" Value="False" />
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </MultiDataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Image.Style>
+                                                    </Image>
+
+                                                    <Image x:Name="RealIcon"
+                                                           Stretch="Uniform"
+                                                           VerticalAlignment="Center">
+                                                        <Image.Source>
+                                                            <PriorityBinding>
+                                                                <Binding Path="FriendAchievementIcon" />
+                                                                <Binding Path="SelfAchievementIconResolved" />
+                                                            </PriorityBinding>
+                                                        </Image.Source>
+                                                        <Image.Style>
+                                                            <Style TargetType="Image">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                <Style.Triggers>
+                                                                    <MultiDataTrigger>
+                                                                        <MultiDataTrigger.Conditions>
+                                                                            <Condition Binding="{Binding CanReveal}" Value="True" />
+                                                                            <Condition Binding="{Binding IsRevealed}" Value="False" />
+                                                                        </MultiDataTrigger.Conditions>
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </MultiDataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Image.Style>
+                                                    </Image>
                                                 </Grid>
 
 

@@ -14,9 +14,6 @@ namespace FriendsAchievementFeed.Models
     {
         private readonly FriendsAchievementFeedPlugin _plugin;
 
-        private static readonly Guid SteamPluginId =
-            Guid.Parse("CB91DFC9-B977-43BF-8E70-55F46E410FAB");
-
         private FriendsAchievementFeedSettings _editingClone;
 
         private string _steamUserId;
