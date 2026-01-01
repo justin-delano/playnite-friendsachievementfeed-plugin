@@ -307,30 +307,17 @@
                                             <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Feed_Header_Achieved}"
                                                 Margin="4,0,0,0"
                                                 Foreground="{DynamicResource TextBrush}"
-                                                Opacity="0.6">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                        <Style.Triggers>
-                                                            <!-- In global feed (ShowGameName=True), don't show "Achieved" -->
-                                                            <DataTrigger Binding="{Binding ShowGameName, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
-                                                                        Value="True">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
+                                                Opacity="0.6" />
                                             <TextBlock Text=" "
                                                 Foreground="{DynamicResource TextBrush}"
                                                 Opacity="0.6">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Setter Property="Visibility" Value="Collapsed" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding ShowGameName, RelativeSource={RelativeSource AncestorType=local:FeedViewControl}}"
+                                                            <DataTrigger Binding="{Binding ShowGameName}"
                                                                         Value="True">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Setter Property="Visibility" Value="Visible" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>

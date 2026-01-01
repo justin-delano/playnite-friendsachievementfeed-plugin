@@ -8,6 +8,9 @@ namespace FriendsAchievementFeed.Services
 {
     public interface ISteamDataProvider
     {
+        // Cookies
+        Task<bool> RefreshCookiesAsync(CancellationToken cancel);
+
         // Achievements (HTML scrape)
         Task<List<ScrapedAchievementRow>> GetScrapedAchievementsAsync(
             string steamId64,

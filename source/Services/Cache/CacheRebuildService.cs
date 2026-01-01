@@ -655,8 +655,7 @@ namespace FriendsAchievementFeed.Services
             List<ScrapedAchievementRow> friendRows,
             bool friendHasAnyCached,
             Dictionary<int, DateTime> maxUnlockByAppForFriend,
-            HashSet<string> existingIds,
-            DateTime? lastUpdatedUtc)
+            HashSet<string> existingIds)
         {
             var analysis = new FriendRowAnalysis();
             if (friendRows == null || friendRows.Count == 0)
@@ -687,10 +686,9 @@ namespace FriendsAchievementFeed.Services
 
                 if (hasMaxForApp)
                 {
+                    // Only gate against the last cached unlock for this friend+app; do not use cache write time
+                    // so offline or late-arriving unlocks with older timestamps can still backfill correctly.
                     if (u <= maxCachedForApp)
-                        continue;
-
-                    if (lastUpdatedUtc.HasValue && u <= lastUpdatedUtc.Value)
                         continue;
                 }
 
@@ -812,7 +810,6 @@ namespace FriendsAchievementFeed.Services
                 StringComparer.OrdinalIgnoreCase);
 
             var friendAppMaxUnlock = BuildFriendAppMaxUnlockMap(existingEntries);
-            var lastUpdatedUtc = _cacheService.GetFriendFeedLastUpdatedUtc();
 
             var includeUnownedSet = ToSet(options.IncludeUnownedFriendIds);
 
@@ -1305,8 +1302,7 @@ namespace FriendsAchievementFeed.Services
                         friendRows: rows,
                         friendHasAnyCached: friendHasAnyCached,
                         maxUnlockByAppForFriend: maxUnlockByAppForFriend,
-                        existingIds: existingIds,
-                        lastUpdatedUtc: lastUpdatedUtc);
+                        existingIds: existingIds);
 
                     if (analysis.SawAnyUnlocked)
                     {

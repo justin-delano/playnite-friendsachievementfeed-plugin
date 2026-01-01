@@ -703,7 +703,7 @@ namespace FriendsAchievementFeed.Services
         }
 
         // ---------------------------------------------------------------------
-        // Player Summaries (CHANGED): Steam Web API batching, with HTML fallback
+        // Player Summaries
         // ---------------------------------------------------------------------
 
         // Back-compat overload: old callers still work, but will do HTML fallback.

@@ -235,6 +235,20 @@ namespace FriendsAchievementFeed.Services
 
             try
             {
+                try
+                {
+                    var refreshed = await _steam.RefreshCookiesAsync(cts.Token).ConfigureAwait(false);
+                    if (!refreshed)
+                    {
+                        _logger?.Debug("[FAF] Steam cookie refresh before scan returned no cookies.");
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _logger?.Debug(ex, "[FAF] Steam cookie refresh before scan failed; continuing.");
+                }
+
                 // Unified progress callback for both scan modes
                 Action<CacheRebuildService.RebuildUpdate> onUpdate = HandleUpdate;
 

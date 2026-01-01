@@ -37,6 +37,10 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_EnableNotifications">Enable Plugin Notifications</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyPeriodicUpdates">Show Toast for Periodic Updates</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyOnRebuild">Show Toast for Rebuild Completion/Failure</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Title">Quick Scan limits</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Description">Bound the quick scan to a small set of recent friends and games.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Friends">Recent friends to scan</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_GamesPerFriend">Recent games per friend</sys:String>
 
     <!-- Appearance -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Appearance">Appearance and Layout</sys:String>

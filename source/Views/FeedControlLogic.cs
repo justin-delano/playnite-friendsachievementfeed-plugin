@@ -251,6 +251,8 @@ namespace FriendsAchievementFeed.Views
             _logger = logger;
             _feedService = feedService;
 
+            SyncIncrementalScanDefaults();
+
             InitializeView(); // collections, hydrator, view wiring
 
             _feedService.CacheChanged += FeedService_CacheChanged;
@@ -350,8 +352,24 @@ namespace FriendsAchievementFeed.Views
                     case nameof(_settings.SteamApiKey):
                         QueueValidateAuth();
                         break;
+
+                    case nameof(_settings.QuickScanRecentFriendsCount):
+                        IncrementalRecentFriendsCount = _settings.QuickScanRecentFriendsCount;
+                        break;
+
+                    case nameof(_settings.QuickScanRecentGamesPerFriend):
+                        IncrementalRecentGamesPerFriend = _settings.QuickScanRecentGamesPerFriend;
+                        break;
                 }
             };
+        }
+
+        private void SyncIncrementalScanDefaults()
+        {
+            if (_settings == null) return;
+
+            IncrementalRecentFriendsCount = Math.Max(0, _settings.QuickScanRecentFriendsCount);
+            IncrementalRecentGamesPerFriend = Math.Max(0, _settings.QuickScanRecentGamesPerFriend);
         }
 
         private void QueueValidateAuth()

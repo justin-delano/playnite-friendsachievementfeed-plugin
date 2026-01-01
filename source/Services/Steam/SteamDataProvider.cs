@@ -44,6 +44,11 @@ namespace FriendsAchievementFeed.Services
             return string.IsNullOrWhiteSpace(key) ? null : key.Trim();
         }
 
+        public Task<bool> RefreshCookiesAsync(CancellationToken cancel)
+        {
+            return _steam.ReloadCookiesFromDiskAsync(cancel);
+        }
+
         private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct)
         {
             if (!string.IsNullOrWhiteSpace(steamIdMaybe) && ulong.TryParse(steamIdMaybe, out _))

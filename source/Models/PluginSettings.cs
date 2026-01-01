@@ -31,6 +31,8 @@ namespace FriendsAchievementFeed.Models
         private int _friendAvatarSize = 32;
         private int _achievementIconSize = 40;
         private int _gameFeedTabHeight = 5000;
+        private int _quickScanRecentFriendsCount = 5;
+        private int _quickScanRecentGamesPerFriend = 5;
         private bool _hideAchievementsLockedForSelf = false;
         private bool _includeSelfUnlockTime = false;
         private bool _hasGameFeedGroups;
@@ -93,6 +95,24 @@ namespace FriendsAchievementFeed.Models
         {
             get => _gameFeedTabHeight;
             set => SetValue(ref _gameFeedTabHeight, value);
+        }
+
+        /// <summary>
+        /// Maximum recent friends to scan when using Quick Scan.
+        /// </summary>
+        public int QuickScanRecentFriendsCount
+        {
+            get => _quickScanRecentFriendsCount;
+            set => SetValue(ref _quickScanRecentFriendsCount, Math.Max(0, value));
+        }
+
+        /// <summary>
+        /// Maximum recent games per friend to scan when using Quick Scan.
+        /// </summary>
+        public int QuickScanRecentGamesPerFriend
+        {
+            get => _quickScanRecentGamesPerFriend;
+            set => SetValue(ref _quickScanRecentGamesPerFriend, Math.Max(0, value));
         }
 
         
@@ -315,6 +335,8 @@ namespace FriendsAchievementFeed.Models
                 FriendAvatarSize = saved.FriendAvatarSize;
                 AchievementIconSize = saved.AchievementIconSize;
                 GameFeedTabHeight = saved.GameFeedTabHeight;
+                QuickScanRecentFriendsCount = saved.QuickScanRecentFriendsCount;
+                QuickScanRecentGamesPerFriend = saved.QuickScanRecentGamesPerFriend;
                 HideAchievementsLockedForSelf = saved.HideAchievementsLockedForSelf;
                 IncludeSelfUnlockTime = saved.IncludeSelfUnlockTime;
                 EnableNotifications = saved.EnableNotifications;
@@ -351,6 +373,8 @@ namespace FriendsAchievementFeed.Models
                 FriendAvatarSize = _editingClone.FriendAvatarSize;
                 AchievementIconSize = _editingClone.AchievementIconSize;
                 GameFeedTabHeight = _editingClone.GameFeedTabHeight;
+                QuickScanRecentFriendsCount = _editingClone.QuickScanRecentFriendsCount;
+                QuickScanRecentGamesPerFriend = _editingClone.QuickScanRecentGamesPerFriend;
                 HideAchievementsLockedForSelf = _editingClone.HideAchievementsLockedForSelf;
                 IncludeSelfUnlockTime = _editingClone.IncludeSelfUnlockTime;
                 EnableNotifications = _editingClone.EnableNotifications;

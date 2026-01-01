@@ -37,6 +37,10 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_EnableNotifications">Activer les notifications du plugin</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyPeriodicUpdates">Afficher une notification pour les mises à jour automatiques</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyOnRebuild">Afficher une notification à la fin ou en cas d'échec d'une mise à jour</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Title">Limites de l'analyse rapide</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Description">Limite l'analyse rapide à un petit ensemble d'amis récents et de jeux récents.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Friends">Amis récents à analyser</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_GamesPerFriend">Jeux récents par ami</sys:String>
 
     <!-- Appearance -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Appearance">Apparence et affichage</sys:String>
