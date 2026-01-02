@@ -2,6 +2,7 @@ using Playnite.SDK;
 using Playnite.SDK.Plugins;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Playnite.SDK.Data;
 using System.IO;
@@ -36,7 +37,7 @@ namespace FriendsAchievementFeed.Models
         // Expose paths to cache locations instead of storing full feed entries
         private string _exposedGlobalFeedPath = string.Empty;
         private Dictionary<string, string> _exposedGameFeeds = new Dictionary<string, string>();
-        public List<FriendSlot> FriendSlots { get; set; } = new List<FriendSlot>();
+        public ObservableCollection<FriendSlot> FriendSlots { get; set; } = new ObservableCollection<FriendSlot>();
         public string SteamUserId
         {
             get => _steamUserId;
@@ -221,7 +222,7 @@ namespace FriendsAchievementFeed.Models
         /// </summary>
         public IEnumerable<string> GetConfiguredFriendIds()
         {
-            return (FriendSlots ?? new List<FriendSlot>())
+            return (FriendSlots ?? Enumerable.Empty<FriendSlot>())
                 .Select(s => s?.SteamId)
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.OrdinalIgnoreCase);
@@ -237,7 +238,7 @@ namespace FriendsAchievementFeed.Models
                 return;
             }
 
-            FriendSlots ??= new List<FriendSlot>();
+            FriendSlots ??= new ObservableCollection<FriendSlot>();
             EnsureFriendSlotsCapacity(index + 1);
 
             FriendSlots[index] = new FriendSlot
@@ -245,6 +246,9 @@ namespace FriendsAchievementFeed.Models
                 Name = name ?? string.Empty,
                 SteamId = steamId ?? string.Empty
             };
+
+            // Notify bindings so the UI refreshes cleared/updated slots.
+            OnPropertyChanged(nameof(FriendSlots));
         }
 
         public FriendSlot GetFriendSlot(int index)
@@ -254,7 +258,7 @@ namespace FriendsAchievementFeed.Models
                 return new FriendSlot();
             }
 
-            FriendSlots ??= new List<FriendSlot>();
+            FriendSlots ??= new ObservableCollection<FriendSlot>();
             EnsureFriendSlotsCapacity(index + 1);
 
             return FriendSlots[index] ?? new FriendSlot();
@@ -268,24 +272,21 @@ namespace FriendsAchievementFeed.Models
             }
         }
 
-        private List<FriendSlot> BuildFriendSlots(FriendsAchievementFeedSettings saved)
+        private ObservableCollection<FriendSlot> BuildFriendSlots(FriendsAchievementFeedSettings saved)
         {
             if (saved?.FriendSlots != null && saved.FriendSlots.Any())
             {
                 return CloneSlots(saved.FriendSlots);
             }
 
-            return new List<FriendSlot>();
+            return new ObservableCollection<FriendSlot>();
         }
 
-        private List<FriendSlot> CloneSlots(List<FriendSlot> source)
+        private ObservableCollection<FriendSlot> CloneSlots(IEnumerable<FriendSlot> source)
         {
-            if (source == null)
-            {
-                return new List<FriendSlot>();
-            }
-
-            return source.Select(s => s?.Clone() ?? new FriendSlot()).ToList();
+            return source != null
+                ? new ObservableCollection<FriendSlot>(source.Select(s => s?.Clone() ?? new FriendSlot()))
+                : new ObservableCollection<FriendSlot>();
         }
 
         // Parameterless ctor for deserialization
@@ -294,27 +295,6 @@ namespace FriendsAchievementFeed.Models
         }
 
         public List<int> ForcedScanAppIds { get; set; } = new List<int>();
-
-        // How often we will re-check forced-scan games per friend (because no playtime delta)
-        public int ForcedScanIntervalHours { get; set; } = 24;
-
-        public bool IsForcedScanEnabled(int appId)
-            => appId > 0 && ForcedScanAppIds != null && ForcedScanAppIds.Contains(appId);
-
-        public void ToggleForcedScan(int appId)
-        {
-            if (appId <= 0) return;
-            ForcedScanAppIds ??= new List<int>();
-
-            if (ForcedScanAppIds.Contains(appId))
-            {
-                ForcedScanAppIds.Remove(appId);
-            }
-            else
-            {
-                ForcedScanAppIds.Add(appId);
-            }
-        }
 
         public FriendsAchievementFeedSettings(FriendsAchievementFeedPlugin plugin)
         {

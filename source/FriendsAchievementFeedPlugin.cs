@@ -19,6 +19,7 @@ namespace FriendsAchievementFeed
 {
     public class FriendsAchievementFeedPlugin : GenericPlugin
     {
+        private static readonly Guid SteamPluginId = Guid.Parse("cb91dfc9-b977-43bf-8e70-55f46e410fab");
         private static readonly ILogger _logger = LogManager.GetLogger(nameof(FriendsAchievementFeedPlugin));
 
         public const string SourceName = "FriendsAchievementFeed";
@@ -52,13 +53,15 @@ namespace FriendsAchievementFeed
             _feedService = new AchievementFeedService(api, _settings, _logger, this);
             _notifications = new NotificationPublisher(api, _settings, _logger);
             _backgroundUpdates = new BackgroundUpdateService(_feedService, _settings, _logger, _notifications, UpdateGameFeedGroupsForCurrentGame);
-
             // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
             {
                 SourceName = SourceName,
                 ElementList = new List<string> { "GameFeedTab" }
             });
+
+            // Listen for new games entering the database to auto-scan Steam additions.
+            PlayniteApi?.Database?.Games?.ItemCollectionChanged += Games_ItemCollectionChanged;
 
             AddSettingsSupport(new AddSettingsSupportArgs
             {
@@ -90,91 +93,6 @@ namespace FriendsAchievementFeed
         }
 
         // === Menus ===
-
-        public override IEnumerable<MainMenuItem> GetMainMenuItems(GetMainMenuItemsArgs args)
-        {
-            return new List<MainMenuItem>
-            {
-                new MainMenuItem
-                {
-                    MenuSection = "FriendsAchievementFeed",
-                    Description = "Include unowned games scan…",
-                    Action = _ => StartIncludeUnownedScanFromMenu()
-                }
-            };
-        }
-
-        private void StartIncludeUnownedScanFromMenu()
-        {
-            try
-            {
-                var result = PlayniteApi.Dialogs.ShowMessage(
-                    "This will scan your Playnite Steam library and include games your friends do not own (or have zero playtime) for each selected family-sharing account.\n\n" +
-                    "This can take a while. Continue?",
-                    "Friends Achievement Feed",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-
-                if (result != MessageBoxResult.Yes)
-                {
-                    return;
-                }
-
-                var opts = new CacheRebuildOptions
-                {
-                    // ForceScanAllSteamLibraryGames = true
-                };
-
-                opts.FamilySharingFriendIDs = _settings.GetConfiguredFriendIds().ToList();
-
-                // Blocking, cancellable progress dialog
-                PlayniteApi.Dialogs.ActivateGlobalProgress(async a =>
-                {
-                    a.Text = "Starting include-unowned-games scan…";
-                    a.IsIndeterminate = true;
-
-                    using var cancelReg = a.CancelToken.Register(() => _feedService.CancelActiveRebuild());
-
-                    EventHandler<ProgressReport> handler = (s, r) =>
-                    {
-                        if (r == null) return;
-
-                        a.Text = r.Message ?? a.Text;
-
-                        // Drive the bar from step counts (ProgressReport.PercentComplete is read-only in this build)
-                        if (r.TotalSteps > 0)
-                        {
-                            a.IsIndeterminate = false;
-                            a.ProgressMaxValue = r.TotalSteps;
-                            a.CurrentProgressValue = r.CurrentStep;
-                        }
-                        else
-                        {
-                            a.IsIndeterminate = true;
-                        }
-                    };
-
-                    _feedService.RebuildProgress += handler;
-                    try
-                    {
-                        await _feedService.StartManagedRebuildAsync(opts).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        _feedService.RebuildProgress -= handler;
-                    }
-                },
-                new GlobalProgressOptions("Friends Achievement Feed — Include Unowned Games Scan")
-                {
-                    IsIndeterminate = true,
-                    Cancelable = true
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Failed to start include-unowned-games scan.");
-            }
-        }
 
         public override IEnumerable<GameMenuItem> GetGameMenuItems(GetGameMenuItemsArgs args)
         {
@@ -279,6 +197,8 @@ namespace FriendsAchievementFeed
                 _startupInitCts?.Cancel();
                 _startupInitCts?.Dispose();
                 _startupInitCts = null;
+
+                PlayniteApi?.Database?.Games?.ItemCollectionChanged -= Games_ItemCollectionChanged;
             }
             catch { }
 
@@ -443,6 +363,47 @@ namespace FriendsAchievementFeed
             }
 
             _settings.HasGameFeedGroups = hasGroups;
+        }
+
+        private void Games_ItemCollectionChanged(object sender, ItemCollectionChangedEventArgs<Game> e)
+        {
+            if (e?.AddedItems == null || e.AddedItems.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var game in e.AddedItems)
+            {
+                if (game == null)
+                {
+                    continue;
+                }
+
+                if (game.PluginId != SteamPluginId)
+                {
+                    continue; // Only auto-scan Steam games.
+                }
+
+                // Fire and forget; StartManagedSingleGameScanAsync already manages progress/state.
+                _ = TriggerNewSteamGameScanAsync(game);
+            }
+        }
+
+        private Task TriggerNewSteamGameScanAsync(Game game)
+        {
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    _logger.Info($"[FAF] Detected new Steam game '{game?.Name}' ({game?.GameId}); starting single-game scan.");
+                    await _feedService.StartManagedSingleGameScanAsync(game.Id).ConfigureAwait(false);
+                    UpdateGameFeedGroupsFlag(game);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, $"[FAF] Failed auto-scan for new Steam game '{game?.Name}' ({game?.GameId}).");
+                }
+            });
         }
     }
 }

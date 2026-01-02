@@ -16,6 +16,7 @@ namespace FriendsAchievementFeed.Services
     public sealed class CacheRebuildOptions
     {
         public List<string> FamilySharingFriendIDs { get; set; } = null;
+        public bool LimitToFamilySharingFriends { get; set; } = false;
     }
 
     /// <summary>

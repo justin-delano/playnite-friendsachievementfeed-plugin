@@ -36,6 +36,8 @@
     <sys:String x:Key="LOCFriendsAchFeed_Settings_HoursBetweenUpdates">Intervalle entre les mises à jour (en heures)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_EnableNotifications">Activer les notifications du plugin</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyPeriodicUpdates">Afficher une notification pour les mises à jour automatiques</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_Periodic_InitialCheckFailed">Échec de la vérification initiale des mises à jour automatiques.</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Error_Periodic_UpdateFailed">Échec de la mise à jour automatique.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_NotifyOnRebuild">Afficher une notification à la fin ou en cas d'échec d'une mise à jour</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Title">Limites de l'analyse rapide</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_QuickScan_Description">Limite l'analyse rapide à un petit ensemble d'amis récents et de jeux récents.</sys:String>

@@ -321,6 +321,7 @@ namespace FriendsAchievementFeed.Views
             {
                 var opts = new CacheRebuildOptions();
                 opts.FamilySharingFriendIDs = _plugin.Settings.GetConfiguredFriendIds().ToList();
+                opts.LimitToFamilySharingFriends = true;
 
                 _plugin.PlayniteApi.Dialogs.ActivateGlobalProgress(async a =>
                 {

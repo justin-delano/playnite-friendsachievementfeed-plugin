@@ -40,7 +40,23 @@ namespace FriendsAchievementFeed.Services
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
-            Task.Run(async () => await PeriodicUpdateLoop(token).ConfigureAwait(false), token);
+            var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
+
+            // Run an initial check immediately on startup, then continue with the normal loop.
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await PerformUpdateIfNeeded(interval, token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var msg = L("LOCFriendsAchFeed_Error_Periodic_InitialCheckFailed", "Periodic update initial check failed.");
+                    _logger.Error(ex, msg);
+                }
+
+                await PeriodicUpdateLoop(interval, token).ConfigureAwait(false);
+            }, token);
         }
 
         public void Stop()
@@ -61,20 +77,19 @@ namespace FriendsAchievementFeed.Services
             }
         }
 
-        private async Task PeriodicUpdateLoop(CancellationToken token)
+        private async Task PeriodicUpdateLoop(TimeSpan interval, CancellationToken token)
         {
-            var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
-
             while (!token.IsCancellationRequested)
             {
                 try
                 {
                     await PerformUpdateIfNeeded(interval, token).ConfigureAwait(false);
                 }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "[PeriodicUpdate] Unexpected error in periodic update loop");
-                }
+                    catch (Exception ex)
+                    {
+                        var msg = L("LOCFriendsAchFeed_Error_Periodic_UpdateFailed", "Periodic update failed.");
+                        _logger.Error(ex, msg);
+                    }
 
                 await DelayNextUpdate(interval, token).ConfigureAwait(false);
             }
@@ -84,7 +99,7 @@ namespace FriendsAchievementFeed.Services
         {
             if (ShouldPerformUpdate(interval))
             {
-                await ExecuteDeltaUpdate(token).ConfigureAwait(false);
+                await ExecuteUpdate(token).ConfigureAwait(false);
             }
             else
             {
@@ -98,20 +113,20 @@ namespace FriendsAchievementFeed.Services
             _logger.Debug($"[PeriodicUpdate] Cache valid={_feedService.IsCacheValid()}, lastUpdatedUtc={cacheLast?.ToString() ?? "(none)"}");
 
             return _settings.EnablePeriodicUpdates &&
-                   (!_feedService.IsCacheValid() ||
+                    (!_feedService.IsCacheValid() ||
                     !cacheLast.HasValue ||
                     DateTime.UtcNow - cacheLast.Value >= interval);
         }
 
-        private async Task ExecuteDeltaUpdate(CancellationToken token)
+        private async Task ExecuteUpdate(CancellationToken token)
         {
-            _logger.Debug("[PeriodicUpdate] Triggering delta cache update...");
+            _logger.Debug("[PeriodicUpdate] Triggering cache update...");
 
             try
             {
                 await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
 
-                _logger.Debug("[PeriodicUpdate] Delta cache update completed.");
+                _logger.Debug("[PeriodicUpdate] Cache update completed.");
                 HandleUpdateCompletion();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -120,8 +135,14 @@ namespace FriendsAchievementFeed.Services
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "[PeriodicUpdate] Failed to perform delta update");
+                var msg = L("LOCFriendsAchFeed_Error_Periodic_UpdateFailed", "Periodic update failed.");
+                _logger.Error(ex, msg);
             }
+        }
+
+        private string L(string key, string fallback)
+        {
+            return ResourceProvider.GetString(key) ?? fallback;
         }
 
         private void HandleUpdateCompletion()
