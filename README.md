@@ -14,9 +14,8 @@ Small [Playnite ](https://playnite.link/)extension that shows a chronological fe
 - Caching: the extension builds and maintains a local JSON cache of feed entries to keep the UI fast and avoid repeated API calls.
 - Two rebuild modes:
   - Full rebuild: scans friends and owned games and reconstructs the entire cache.
-  - Incremental rebuild: quick checks for recent changes and merges new entries into the existing cache.
+  - Quick incremental rebuild: check for recent changes and merges new entries into the existing cache.
 - Background updates: optional periodic incremental updates run on a configurable schedule.
-- SuccessStory integration: imports local SuccessStory files (if available) to include metadata not available from the Steam API.
 
 ## Types of feeds
 
@@ -33,7 +32,7 @@ Small [Playnite ](https://playnite.link/)extension that shows a chronological fe
 
 ## Troubleshooting
 
-- No feed items: confirm Steam API key and user ID are configured in plugin settings and that SuccessStory files (if used) are accessible.
+- No feed items: confirm Steam API key and web authentication are configured in plugin settings.
 - Rebuild failures: check plugin logs (Playnite logs) for detailed errors and try a manual full rebuild.
  
 ## Privacy / visibility
