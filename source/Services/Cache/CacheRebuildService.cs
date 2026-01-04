@@ -172,7 +172,7 @@ namespace FriendsAchievementFeed.Services
                 return (new SelfAchievementGameData(), SelfFetchOutcome.Error);
 
             var steamUserId = _settings?.SteamUserId;
-            if (string.IsNullOrWhiteSpace(steamUserId) || string.IsNullOrWhiteSpace(_settings?.SteamApiKey))
+            if (!ValidationHelper.HasSteamCredentials(steamUserId, _settings?.SteamApiKey))
                 return (new SelfAchievementGameData(), SelfFetchOutcome.NoSteamUser);
 
             // Keep existing so we don't "lose" data on failures.
@@ -444,33 +444,8 @@ namespace FriendsAchievementFeed.Services
         // --------------------
         // Helpers: sets/maps
         // --------------------
-        private static HashSet<string> ToSet(IEnumerable<string> ids)
-        {
-            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (ids == null) return set;
 
-            foreach (var id in ids)
-            {
-                if (string.IsNullOrWhiteSpace(id)) continue;
-                set.Add(id.Trim());
-            }
-            return set;
-        }
 
-        private static List<SteamFriendModel> FilterFriends(List<SteamFriendModel> all, IReadOnlyCollection<string> ids)
-        {
-            all ??= new List<SteamFriendModel>();
-            if (ids == null || ids.Count == 0) return all;
-
-            var set = ToSet(ids);
-            var result = new List<SteamFriendModel>(all.Count);
-            foreach (var f in all)
-            {
-                if (f == null || string.IsNullOrWhiteSpace(f.SteamId)) continue;
-                if (set.Contains(f.SteamId)) result.Add(f);
-            }
-            return result;
-        }
 
         private List<int> ResolveExplicitAppIds(CacheScanOptions opt, Dictionary<int, Game> steamGamesDict)
         {
@@ -515,130 +490,15 @@ namespace FriendsAchievementFeed.Services
             return ordered.Count == 0 ? null : ordered;
         }
 
-        private Dictionary<string, Dictionary<int, DateTime>> BuildFriendAppMaxUnlockMap(IEnumerable<FeedEntry> existingEntries)
-        {
-            var result = new Dictionary<string, Dictionary<int, DateTime>>(StringComparer.OrdinalIgnoreCase);
 
-            if (existingEntries == null) return result;
 
-            foreach (var e in existingEntries)
-            {
-                if (e == null || string.IsNullOrWhiteSpace(e.FriendSteamId))
-                    continue;
 
-                if (!result.TryGetValue(e.FriendSteamId, out var appMap))
-                {
-                    appMap = new Dictionary<int, DateTime>();
-                    result[e.FriendSteamId] = appMap;
-                }
 
-                var unlockUtc = FeedEntryFactory.AsUtcKind(e.FriendUnlockTimeUtc);
 
-                if (!appMap.TryGetValue(e.AppId, out var existing) || unlockUtc > existing)
-                    appMap[e.AppId] = unlockUtc;
-            }
 
-            return result;
-        }
 
-        private static readonly Guid SteamPluginId =
-            Guid.Parse("CB91DFC9-B977-43BF-8E70-55F46E410FAB");
 
-        private Dictionary<int, Game> BuildSteamLibraryGamesDict()
-        {
-            var dict = new Dictionary<int, Game>();
 
-            var dbGames = _api?.Database?.Games;
-            if (dbGames == null)
-            {
-                _logger?.Info("[FAF] Steam games in Playnite DB: 0 (no DB)");
-                return dict;
-            }
-
-            foreach (var g in dbGames)
-            {
-                if (g == null || g.PluginId != SteamPluginId)
-                    continue;
-
-                if (_steam.TryGetSteamAppId(g, out var appId) && appId > 0)
-                {
-                    if (!dict.ContainsKey(appId))
-                        dict[appId] = g;
-                }
-            }
-
-            _logger?.Info($"[FAF] Steam games in Playnite DB: {dict.Count}");
-            return dict;
-        }
-
-        private static Dictionary<string, int> BuildPlayniteIdToAppId(Dictionary<int, Game> steamGamesDict)
-        {
-            var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            if (steamGamesDict == null) return map;
-
-            foreach (var kv in steamGamesDict)
-            {
-                var appId = kv.Key;
-                var g = kv.Value;
-                if (g == null) continue;
-
-                var pid = g.Id.ToString();
-                if (string.IsNullOrWhiteSpace(pid)) continue;
-
-                if (!map.ContainsKey(pid))
-                    map[pid] = appId;
-            }
-            return map;
-        }
-
-        private static Dictionary<int, int> FilterMinutesToLibrary(Dictionary<int, int> minutesByApp, ISet<int> libraryAppIds)
-        {
-            if (minutesByApp == null || minutesByApp.Count == 0)
-                return new Dictionary<int, int>();
-
-            if (libraryAppIds == null || libraryAppIds.Count == 0)
-                return new Dictionary<int, int>(minutesByApp);
-
-            var filtered = new Dictionary<int, int>(Math.Min(minutesByApp.Count, libraryAppIds.Count));
-            foreach (var kv in minutesByApp)
-            {
-                if (libraryAppIds.Contains(kv.Key))
-                    filtered[kv.Key] = kv.Value;
-            }
-
-            return filtered;
-        }
-
-        private static bool HasNonZeroMinutes(Dictionary<int, int> minutesByApp, int appId)
-        {
-            if (minutesByApp == null) return false;
-            return minutesByApp.TryGetValue(appId, out var m) && m > 0;
-        }
-
-        private static List<int> FilterToNonZeroMinutesApps(IEnumerable<int> appIds, Dictionary<int, int> minutesByApp)
-        {
-            var set = new HashSet<int>();
-            if (appIds == null)
-                return new List<int>();
-
-            var hasMinutes = minutesByApp != null && minutesByApp.Count > 0;
-
-            foreach (var a in appIds)
-            {
-                if (a <= 0) continue;
-
-                if (!hasMinutes)
-                {
-                    set.Add(a);
-                    continue;
-                }
-
-                if (HasNonZeroMinutes(minutesByApp, a))
-                    set.Add(a);
-            }
-
-            return set.Count == 0 ? new List<int>() : set.ToList();
-        }
 
         // --------------------
         // Friend achievement row analysis
@@ -774,7 +634,7 @@ namespace FriendsAchievementFeed.Services
 
             var payload = new RebuildPayload();
 
-            if (string.IsNullOrWhiteSpace(_settings?.SteamUserId) || string.IsNullOrWhiteSpace(_settings?.SteamApiKey))
+            if (!ValidationHelper.HasSteamCredentials(_settings?.SteamUserId, _settings?.SteamApiKey))
             {
                 EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.NotConfigured });
                 payload.Summary = new RebuildSummary();
@@ -785,7 +645,7 @@ namespace FriendsAchievementFeed.Services
 
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingOwnedGames });
 
-            var steamGamesDict = BuildSteamLibraryGamesDict();
+            var steamGamesDict = SteamLibraryHelper.BuildSteamLibraryGamesDict(_api, _steam, _logger);
             var myLibraryAppIds = new HashSet<int>(steamGamesDict.Keys);
 
             // Defer building PlayniteId->AppId map and family-share forced apps until we know
@@ -800,7 +660,7 @@ namespace FriendsAchievementFeed.Services
                 ? (await _steam.GetFriendsAsync(_settings.SteamUserId, _settings.SteamApiKey, cancel).ConfigureAwait(false) ?? new List<SteamFriendModel>())
                 : new List<SteamFriendModel>();
 
-            var friends = FilterFriends(allFriends, options.FriendSteamIds);
+            var friends = FriendScanHelper.FilterFriends(allFriends, options.FriendSteamIds);
 
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingExistingCache });
 
@@ -810,9 +670,9 @@ namespace FriendsAchievementFeed.Services
                 existingEntries.Where(e => e != null && !string.IsNullOrWhiteSpace(e.Id)).Select(e => e.Id),
                 StringComparer.OrdinalIgnoreCase);
 
-            var friendAppMaxUnlock = BuildFriendAppMaxUnlockMap(existingEntries);
+            var friendAppMaxUnlock = FriendScanHelper.BuildFriendAppMaxUnlockMap(existingEntries);
 
-            var includeUnownedSet = ToSet(options.IncludeUnownedFriendIds);
+            var includeUnownedSet = FriendScanHelper.ToSet(options.IncludeUnownedFriendIds);
 
             // Explicit apps still exist as a general scan feature. QuickScanRecentPairs overrides it for friend selection.
             var explicitApps = ResolveExplicitAppIds(options, steamGamesDict);
@@ -826,7 +686,7 @@ namespace FriendsAchievementFeed.Services
             // Quick scans intentionally avoid family-share expansion and do not require this mapping.
             if (options.IncludeFriends && !quickScan)
             {
-                playniteIdToAppId = BuildPlayniteIdToAppId(steamGamesDict);
+                playniteIdToAppId = SteamLibraryHelper.BuildPlayniteIdToAppId(steamGamesDict);
                 forcedAppsByFriend = BuildFamilySharingForcedAppsByFriend(playniteIdToAppId);
             }
 
@@ -1146,7 +1006,7 @@ namespace FriendsAchievementFeed.Services
                 }
 
                 // Only Steam games in Playnite DB
-                selfMinutes = FilterMinutesToLibrary(selfMinutes, myLibraryAppIds);
+                selfMinutes = SteamLibraryHelper.FilterMinutesToLibrary(selfMinutes, myLibraryAppIds);
 
                 if (quickScan)
                 {
@@ -1158,7 +1018,7 @@ namespace FriendsAchievementFeed.Services
                     else
                     {
                         selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? FilterToNonZeroMinutesApps(selfBaseApps, selfMinutes)
+                            ? SteamLibraryHelper.FilterToNonZeroMinutesApps(selfBaseApps, selfMinutes)
                             : selfBaseApps;
                     }
                 }
@@ -1175,7 +1035,7 @@ namespace FriendsAchievementFeed.Services
                         }
 
                         selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? FilterToNonZeroMinutesApps(baseApps, selfMinutes)
+                            ? SteamLibraryHelper.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
                             : baseApps;
                     }
                     else if (options.SelfAllLibraryApps)
@@ -1188,7 +1048,7 @@ namespace FriendsAchievementFeed.Services
                         // Default: nominate all self games; if minutes are available, drop 0-minute games.
                         var baseApps = steamGamesDict.Keys.Where(a => a > 0).ToList();
                         selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? FilterToNonZeroMinutesApps(baseApps, selfMinutes)
+                            ? SteamLibraryHelper.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
                             : baseApps;
                     }
                 }
@@ -1413,7 +1273,8 @@ namespace FriendsAchievementFeed.Services
 
                     try
                     {
-                        var (_, outcome) = await FetchSelfInternalAsync(pid, appId, cancel).ConfigureAwait(false);
+                        var result = await FetchSelfInternalAsync(pid, appId, cancel).ConfigureAwait(false);
+                        var outcome = result.Outcome;
                         switch (outcome)
                         {
                             case SelfFetchOutcome.Saved: saved++; break;

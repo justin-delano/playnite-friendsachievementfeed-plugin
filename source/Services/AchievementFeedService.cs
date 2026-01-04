@@ -254,16 +254,16 @@ namespace FriendsAchievementFeed.Services
 
                 var payload = await runner(cts.Token).ConfigureAwait(false);
 
-                var msg = finalMessage?.Invoke(payload) ?? ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedRebuild");
+                var msg = finalMessage?.Invoke(payload) ?? ResourceHelper.ErrorFailedRebuild;
                 _lastStatus = msg;
                 Report(msg, 1, 1);
             }
             catch (OperationCanceledException)
             {
-                var msg = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled");
+                var msg = ResourceHelper.RebuildCanceled;
                 _lastStatus = msg;
                 Report(msg, 0, 1, canceled: true);
-                _logger?.Debug(ResourceProvider.GetString("LOCFriendsAchFeed_Debug_RebuildCanceledByUser"));
+                _logger?.Debug(ResourceHelper.DebugRebuildCanceled);
             }
             catch (Exception ex)
             {
@@ -406,7 +406,7 @@ namespace FriendsAchievementFeed.Services
         public bool IsCacheValid()
         {
             var entries = _cacheService.GetCachedFriendEntries();
-            return entries != null && entries.Count > 0;
+            return entries?.Any() == true;
         }
 
         public DateTime? GetCacheLastUpdated()

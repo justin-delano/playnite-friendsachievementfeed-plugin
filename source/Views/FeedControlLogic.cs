@@ -10,8 +10,10 @@ using System.Windows;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Common;
 using FriendsAchievementFeed.Services;
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Views.Helpers;
 using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Views
@@ -28,11 +30,9 @@ namespace FriendsAchievementFeed.Views
         private readonly AsyncCommand _refreshCmd;
         private readonly AsyncCommand _cancelRebuildCmd;
 
-        // Throttle progress UI updates
-        private readonly object _progressUiLock = new object();
-        private DateTime _lastProgressUiUpdateUtc = DateTime.MinValue;
-        private static readonly TimeSpan ProgressUiMinInterval = TimeSpan.FromMilliseconds(50);
-        private bool _userRequestedCancel = false;
+        // Helpers for auth and progress
+        private readonly SteamAuthValidator _authValidator;
+        private readonly RebuildProgressHandler _progressHandler;
 
         // per-game command lives here (organization)
         private AsyncCommand _singleGameScanCmd;
@@ -123,7 +123,7 @@ namespace FriendsAchievementFeed.Views
         public ObservableCollection<FeedEntry> AllEntries { get; } = new ObservableCollection<FeedEntry>();
         public ICollectionView EntriesView { get; private set; }
         public ObservableCollection<FeedGroup> GroupedEntries { get; } = new ObservableCollection<FeedGroup>();
-        public bool HasAnyEntries => GroupedEntries != null && GroupedEntries.Count > 0;
+        public bool HasAnyEntries => GroupedEntries?.Any() == true;
 
         public ObservableCollection<string> FriendFilters { get; } = new ObservableCollection<string>();
         public ObservableCollection<string> GameFilters { get; } = new ObservableCollection<string>();
@@ -206,12 +206,7 @@ namespace FriendsAchievementFeed.Views
         // Debounce token for re-applying the current raw list (MaxFeedItems changes, etc.)
         private CancellationTokenSource _reapplyCts;
 
-        // Debounce token for auth checks (cookie / API key validity)
-        private CancellationTokenSource _authCheckCts;
 
-        // Last known auth check result: true=valid, false=invalid, null=unknown/pending
-        private bool? _authValid = null;
-        private string _authMessage = null;
 
         // Track only entries that have been temporarily revealed
         private readonly HashSet<string> _revealedEntryIds = new HashSet<string>(StringComparer.Ordinal);
@@ -224,21 +219,9 @@ namespace FriendsAchievementFeed.Views
         private const int PopulateBatchSize = 250;
         private int _populateGeneration = 0;
 
-        // ---- Centralized auth state ----
-
-        private bool IsSteamKeyConfigured =>
-            _settings != null &&
-            !string.IsNullOrWhiteSpace(_settings.SteamUserId) &&
-            !string.IsNullOrWhiteSpace(_settings.SteamApiKey);
-
-        private bool IsSteamAuthValid => _authValid == true;
-
-        // Treat null (unknown/pending) as "not ready" to block actions until check completes.
-        private bool IsSteamReady => IsSteamKeyConfigured && IsSteamAuthValid;
-
-        // UI-bindable (optional, but useful for banners/panels)
-        public bool SteamReady => IsSteamReady;
-        public string SteamAuthMessage => _authMessage;
+        // ---- Centralized auth state (delegated to helper) ----
+        public bool SteamReady => _authValidator.IsSteamReady;
+        public string SteamAuthMessage => _authValidator.AuthMessage;
 
         public FeedControlLogic(
             IPlayniteAPI api,
@@ -251,6 +234,12 @@ namespace FriendsAchievementFeed.Views
             _logger = logger;
             _feedService = feedService;
 
+            _authValidator = new SteamAuthValidator(settings, feedService);
+            _authValidator.AuthStateChanged += (s, e) => UpdateAuthBindings();
+
+            _progressHandler = new RebuildProgressHandler(feedService, logger);
+            _progressHandler.ProgressUpdated += OnProgressUpdate;
+
             SyncIncrementalScanDefaults();
 
             InitializeView(); // collections, hydrator, view wiring
@@ -260,12 +249,12 @@ namespace FriendsAchievementFeed.Views
             _triggerRebuildCmd = new AsyncCommand(async _ =>
             {
                 await TriggerRebuild(null, default).ConfigureAwait(false);
-            }, _ => !IsLoading && !_feedService.IsRebuilding && IsSteamReady);
+            }, _ => !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady);
 
             _triggerIncrementalScanCmd = new AsyncCommand(async _ =>
             {
                 await TriggerIncrementalScanAsync(default).ConfigureAwait(false);
-            }, _ => !IsLoading && !_feedService.IsRebuilding && IsSteamReady);
+            }, _ => !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady);
 
             // Refresh stays allowed even without Steam configured (it can load cache),
             // but will block rebuild paths via EnsureSteamReadyAsync.
@@ -288,10 +277,8 @@ namespace FriendsAchievementFeed.Views
             InitializeQuickScan(); // wire quick-scan command
 
             HookSettingsChanges();
-            QueueValidateAuth();
+            _authValidator.QueueValidation();
             TryInitializeFromServiceState();
-
-            _feedService.RebuildProgress += Service_RebuildProgress;
         }
 
         private static DateTime AsLocalFromUtc(DateTime dt)
@@ -350,7 +337,7 @@ namespace FriendsAchievementFeed.Views
 
                     case nameof(_settings.SteamUserId):
                     case nameof(_settings.SteamApiKey):
-                        QueueValidateAuth();
+                        _authValidator.QueueValidation();
                         break;
 
                     case nameof(_settings.QuickScanRecentFriendsCount):
@@ -372,66 +359,13 @@ namespace FriendsAchievementFeed.Views
             IncrementalRecentGamesPerFriend = Math.Max(0, _settings.QuickScanRecentGamesPerFriend);
         }
 
-        private void QueueValidateAuth()
-        {
-            _authCheckCts?.Cancel();
-            _authCheckCts?.Dispose();
-            _authCheckCts = new CancellationTokenSource();
-            var token = _authCheckCts.Token;
 
-            Task.Run(async () =>
-            {
-                try
-                {
-                    // Small debounce to allow rapid typing/save
-                    await Task.Delay(250, token).ConfigureAwait(false);
-                    token.ThrowIfCancellationRequested();
 
-                    // If basic strings missing, mark auth invalid and update immediately on UI thread.
-                    if (!IsSteamKeyConfigured)
-                    {
-                        _authValid = false;
-                        _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
-                        UpdateAuthBindings();
-                        return;
-                    }
-
-                    // Indicate we're checking
-                    _authValid = null;
-                    _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Settings_CheckingSteamAuth") ?? "Checking Steam authentication...";
-                    UpdateAuthBindings();
-
-                    // Validate Steam cookies/profile presence (and anything else your service checks)
-                    var result = await _feedService.TestSteamAuthAsync().ConfigureAwait(false);
-
-                    // Save result and refresh UI
-                    _authValid = result.Success;
-                    _authMessage = result.Message;
-
-                    UpdateAuthBindings();
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex)
-                {
-                    _logger?.Error(ex, "Error validating Steam auth settings.");
-                    _authValid = false;
-                    _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured") ?? "Steam not configured.";
-                    UpdateAuthBindings();
-                }
-            }, token);
-        }
-
-        private void RunOnUi(Action action, DispatcherPriority priority = DispatcherPriority.Normal)
+        private void RunOnUi(Action action)
         {
             var disp = Application.Current?.Dispatcher;
-            if (disp != null && !disp.CheckAccess())
-            {
-                disp.BeginInvoke(action, priority);
-            }
-            else
-            {
-                action();
-            }
+            if (disp != null)
+                disp.InvokeIfNeeded(action);
         }
 
         private void UpdateAuthBindings()
@@ -761,25 +695,18 @@ namespace FriendsAchievementFeed.Views
                 }
 
                 // If Steam settings are not configured, show an explicit message.
-                if (!IsSteamKeyConfigured)
+                if (!_authValidator.IsSteamKeyConfigured)
                 {
                     StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
                     return;
                 }
 
                 // If we performed an auth check and it's invalid, show that message.
-                if (_authValid == false)
+                if (!_authValidator.IsSteamAuthValid)
                 {
-                    StatusMessage = !string.IsNullOrWhiteSpace(_authMessage)
-                        ? _authMessage
+                    StatusMessage = !string.IsNullOrWhiteSpace(_authValidator.AuthMessage)
+                        ? _authValidator.AuthMessage
                         : ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
-                    return;
-                }
-
-                // If auth is still pending/unknown, prefer the checking message if present.
-                if (_authValid == null && !string.IsNullOrWhiteSpace(_authMessage))
-                {
-                    StatusMessage = _authMessage;
                     return;
                 }
 
@@ -862,7 +789,7 @@ namespace FriendsAchievementFeed.Views
                     RunOnUi(() =>
                     {
                         ProgressPercent = last?.PercentComplete ?? 0;
-                        StatusMessage = !string.IsNullOrWhiteSpace(last?.Message) ? last.Message : (lastStatus ?? string.Empty);
+                        StatusMessage = StatusMessageResolver.GetEffectiveMessage(last, lastStatus);
                         ShowProgress = true;
                         IsLoading = true;
                         NotifyCommandsChanged();
@@ -940,36 +867,7 @@ namespace FriendsAchievementFeed.Views
 
         private async Task<bool> EnsureSteamReadyAsync(bool showDialog, CancellationToken token)
         {
-            // Key/user missing: immediate fail (no network call)
-            if (!IsSteamKeyConfigured)
-            {
-                _authValid = false;
-                _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured")
-                              ?? "Steam API key / user id not configured.";
-
-                UpdateAuthBindings();
-
-                if (showDialog) ShowAuthDialogOnce(_authMessage);
-                return false;
-            }
-
-            // If we already know it’s good, proceed
-            if (_authValid == true)
-                return true;
-
-            // Unknown or previously bad: run a fresh test (cookies/web auth etc.)
-            var result = await _feedService.TestSteamAuthAsync().ConfigureAwait(false);
-            _authValid = result.Success;
-            _authMessage = result.Message;
-
-            UpdateAuthBindings();
-
-            if (!result.Success && showDialog)
-            {
-                ShowAuthDialogOnce(_authMessage ?? ResourceProvider.GetString("LOCFriendsAchFeed_Settings_SteamAuth_WebAuthUnavailable"));
-            }
-
-            return result.Success;
+            return await _authValidator.EnsureReadyAsync(showDialog, ShowAuthDialogOnce, token).ConfigureAwait(false);
         }
 
         public async Task RefreshAsync(CancellationToken token = default)
@@ -1195,12 +1093,8 @@ namespace FriendsAchievementFeed.Views
         {
             try
             {
-                if (_feedService != null && _feedService.IsRebuilding)
-                {
-                    _userRequestedCancel = true;
-                    _feedService.CancelActiveRebuild();
-                    StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled");
-                }
+                _progressHandler?.CancelRebuild();
+                StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled");
             }
             catch (Exception ex)
             {
@@ -1214,71 +1108,13 @@ namespace FriendsAchievementFeed.Views
             }
         }
 
-        private void Service_RebuildProgress(object sender, ProgressReport report)
+        private void OnProgressUpdate(object sender, ProgressUpdateEventArgs e)
         {
-            try
-            {
-                var now = DateTime.UtcNow;
-                lock (_progressUiLock)
-                {
-                    var pct = report?.PercentComplete ?? 0;
-                    if ((pct <= 0 || double.IsNaN(pct)) && report != null && report.TotalSteps > 0)
-                    {
-                        pct = Math.Max(0, Math.Min(100, (report.CurrentStep * 100.0) / report.TotalSteps));
-                    }
-                    ProgressPercent = pct;
-
-                    var isFinalish = pct >= 100 || (report?.TotalSteps > 0 && report.CurrentStep >= report.TotalSteps);
-                    if (!isFinalish && (now - _lastProgressUiUpdateUtc) < ProgressUiMinInterval)
-                    {
-                        return;
-                    }
-
-                    _lastProgressUiUpdateUtc = now;
-                }
-
-                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    try
-                    {
-                        var pct = report?.PercentComplete ?? 0;
-                        if ((pct <= 0 || double.IsNaN(pct)) && report != null && report.TotalSteps > 0)
-                        {
-                            pct = Math.Max(0, Math.Min(100, (report.CurrentStep * 100.0) / report.TotalSteps));
-                        }
-                        ProgressPercent = pct;
-
-                        var msg = report?.Message ?? _feedService.GetLastRebuildStatus() ?? string.Empty;
-
-                        if (report?.IsCanceled == true)
-                        {
-                            if (!_userRequestedCancel)
-                            {
-                                msg = _feedService.GetLastRebuildStatus() ?? string.Empty;
-                            }
-                            else
-                            {
-                                _userRequestedCancel = false;
-                            }
-                        }
-
-                        StatusMessage = msg;
-
-                        ShowProgress = _feedService.IsRebuilding;
-                        IsLoading = _feedService.IsRebuilding;
-
-                        NotifyCommandsChanged();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger?.Debug($"Service_RebuildProgress UI update error: {ex.Message}");
-                    }
-                }), DispatcherPriority.Background);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Debug($"Service_RebuildProgress dispatch failed: {ex.Message}");
-            }
+            ProgressPercent = e.Percent;
+            StatusMessage = e.Message;
+            ShowProgress = e.IsRebuilding;
+            IsLoading = e.IsRebuilding;
+            NotifyCommandsChanged();
         }
 
         // ---- Per-game operation (moved here only for organization) ----
@@ -1289,12 +1125,12 @@ namespace FriendsAchievementFeed.Views
             if (!id.HasValue || id.Value == Guid.Empty)
                 return false;
 
-            return !IsLoading && !_feedService.IsRebuilding && IsSteamReady;
+            return !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady;
         }
 
         private bool CanTriggerQuickScan()
         {
-            return !IsLoading && !_feedService.IsRebuilding && IsSteamReady;
+            return !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady;
         }
 
         private async Task TriggerSingleGameScanAsync(CancellationToken externalToken = default)
@@ -1436,11 +1272,20 @@ namespace FriendsAchievementFeed.Views
             try
             {
                 _feedService.CacheChanged -= FeedService_CacheChanged;
-                _feedService.RebuildProgress -= Service_RebuildProgress;
             }
             catch (Exception ex)
             {
                 _logger?.Error(ex, "Error unsubscribing from feed service.");
+            }
+
+            try
+            {
+                _authValidator?.Dispose();
+                _progressHandler?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "Error disposing helpers.");
             }
 
             try
@@ -1474,17 +1319,6 @@ namespace FriendsAchievementFeed.Views
             catch (Exception ex)
             {
                 _logger?.Error(ex, "Error disposing reapply cancellation token.");
-            }
-
-            try
-            {
-                _authCheckCts?.Cancel();
-                _authCheckCts?.Dispose();
-                _authCheckCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing auth check cancellation token.");
             }
         }
     }

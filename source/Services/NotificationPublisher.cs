@@ -20,23 +20,19 @@ namespace FriendsAchievementFeed.Services
 
         public void ShowPeriodicStatus(string status)
         {
-            if (_settings?.EnableNotifications != true || _settings.NotifyPeriodicUpdates == false)
-            {
+            if (_settings?.EnableNotifications != true || !_settings.NotifyPeriodicUpdates)
                 return;
-            }
 
-            var messageTitle = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName");
-            var statusText = string.IsNullOrWhiteSpace(status)
+            var title = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName");
+            var text = string.IsNullOrWhiteSpace(status)
                 ? ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Completed")
                 : status;
-
-            var message = $"{messageTitle}\n{statusText}";
 
             try
             {
                 _api.Notifications.Add(new NotificationMessage(
                     $"FriendsAchievementFeed-Periodic-{Guid.NewGuid()}",
-                    message,
+                    $"{title}\n{text}",
                     NotificationType.Info));
             }
             catch (Exception ex)

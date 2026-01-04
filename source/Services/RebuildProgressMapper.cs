@@ -46,45 +46,41 @@ namespace FriendsAchievementFeed.Services
             {
                 case CacheRebuildService.RebuildUpdateKind.SelfStarted:
                 {
-                    if (_selfStartedSeen)
-                    {
-                        return null;
-                    }
-
+                    if (_selfStartedSeen) return null;
                     _selfStartedSeen = true;
 
-                    var action = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Action_RefreshingAchievements");
-                    var counts = CountsText(0, update.SelfAppCount);
-                    var you = ResourceProvider.GetString("LOCFriendsAchFeed_Label_You") ?? "You";
-                    var msg = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Line_Self"), you, action, counts, AppSuffix(update));
+                    var msg = string.Format(
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Line_Self"),
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Label_You") ?? "You",
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Action_RefreshingAchievements"),
+                        CountsText(0, update.SelfAppCount),
+                        AppSuffix(update));
 
                     return Build(msg);
                 }
 
                 case CacheRebuildService.RebuildUpdateKind.SelfProgress:
                 {
-                    var action = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Action_RefreshingAchievements");
-                    var counts = CountsText(update.SelfAppIndex, update.SelfAppCount);
-                    var you = ResourceProvider.GetString("LOCFriendsAchFeed_Label_You") ?? "You";
-                    var msg = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Line_Self"), you, action, counts, AppSuffix(update));
                     var steps = ProgressSteps(update);
+                    var msg = string.Format(
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Line_Self"),
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Label_You") ?? "You",
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Action_RefreshingAchievements"),
+                        CountsText(update.SelfAppIndex, update.SelfAppCount),
+                        AppSuffix(update));
 
                     return Build(msg, steps.Cur, steps.Total);
                 }
 
                 case CacheRebuildService.RebuildUpdateKind.SelfCompleted:
                 {
-                    if (_selfCompletedSeen)
-                    {
-                        return null;
-                    }
-
+                    if (_selfCompletedSeen) return null;
                     _selfCompletedSeen = true;
 
                     var steps = ProgressSteps(update);
-                    var msg = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_YourCacheUpToDate") ?? "Your achievements cache is up to date.";
-
-                    return Build(msg, steps.Cur, steps.Total);
+                    return Build(
+                        ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_YourCacheUpToDate") ?? "Your achievements cache is up to date.",
+                        steps.Cur, steps.Total);
                 }
 
                 case CacheRebuildService.RebuildUpdateKind.FriendStarted:

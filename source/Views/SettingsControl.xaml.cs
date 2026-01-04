@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FriendsAchievementFeed.Services;
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Views.Helpers;
 using Common;
 using Playnite.SDK;
 
@@ -60,6 +61,7 @@ namespace FriendsAchievementFeed.Views
 
         private readonly FriendsAchievementFeedPlugin _plugin;
         private readonly SteamClient _steam;
+        private readonly SteamAuthUiHelper _steamAuthHelper;
         private List<SteamFriend> _friends = new List<SteamFriend>();
         private readonly ILogger _logger;
 
@@ -74,6 +76,7 @@ namespace FriendsAchievementFeed.Views
             DataContext = _plugin.Settings;
 
             _steam = new SteamClient(_plugin.PlayniteApi, _logger, _plugin.GetPluginUserDataPath());
+            _steamAuthHelper = new SteamAuthUiHelper(_steam, _logger);
 
             Loaded += async (s, e) =>
             {
@@ -96,16 +99,11 @@ namespace FriendsAchievementFeed.Views
 
             try
             {
-                var (ok, msg) = await _steam.AuthenticateInteractiveAsync(CancellationToken.None).ConfigureAwait(true);
-                SteamAuthStatus = SteamStatusHelper.AuthMessage(msg);
+                var (ok, msg) = await _steamAuthHelper.AuthenticateInteractiveAsync(CancellationToken.None).ConfigureAwait(true);
+                SteamAuthStatus = msg;
 
                 await CheckSteamAuthAsync(diskOnly: false).ConfigureAwait(true);
                 await LoadFriendsAsync().ConfigureAwait(true);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "[FAF] Steam Authenticate failed.");
-                SteamAuthStatus = SteamStatusHelper.AuthFailed(ex.Message);
             }
             finally
             {
@@ -115,66 +113,15 @@ namespace FriendsAchievementFeed.Views
 
         private void SteamAuth_Clear_Click(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                _steam.ClearSavedCookies();
-                SteamAuthStatus = SteamStatusHelper.Cleared();
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "[FAF] Steam ClearSavedCookies failed.");
-                SteamAuthStatus = SteamStatusHelper.ClearFailed(ex.Message);
-            }
+            SteamAuthStatus = _steamAuthHelper.ClearSavedCookies();
         }
 
         private async Task CheckSteamAuthAsync(bool diskOnly)
         {
             SetSteamAuthBusy(true);
-
             try
             {
-                await _steam.RefreshCookiesHeadlessAsync(CancellationToken.None).ConfigureAwait(true);
-
-                var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
-                if (string.IsNullOrWhiteSpace(self))
-                {
-                    SteamAuthStatus = SteamStatusHelper.NotAuthenticated();
-                    return;
-                }
-
-                if (diskOnly)
-                {
-                    SteamAuthStatus = SteamStatusHelper.SessionFound(self);
-                    return;
-                }
-
-                var page = await _steam.GetProfilePageAsync(self, CancellationToken.None).ConfigureAwait(true);
-
-                if ((int)page.StatusCode == 429)
-                {
-                    SteamAuthStatus = SteamStatusHelper.AuthMessage("Rate-limited (429). Try again later.");
-                    return;
-                }
-
-                var html = page?.Html ?? "";
-                if (string.IsNullOrWhiteSpace(html))
-                {
-                    SteamAuthStatus = SteamStatusHelper.AuthMessage("No profile returned (network issue?).");
-                    return;
-                }
-
-                if (SteamClient.LooksLoggedOutHeader(html))
-                {
-                    SteamAuthStatus = SteamStatusHelper.AuthMessage("Saved cookies appear logged out. Click Authenticate.");
-                    return;
-                }
-
-                SteamAuthStatus = SteamStatusHelper.AuthMessage($"Auth OK (SteamID {self}).");
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "[FAF] Steam auth check failed.");
-                SteamAuthStatus = SteamStatusHelper.AuthFailed(ex.Message);
+                SteamAuthStatus = await _steamAuthHelper.CheckAuthAsync(diskOnly, CancellationToken.None).ConfigureAwait(true);
             }
             finally
             {
@@ -187,6 +134,9 @@ namespace FriendsAchievementFeed.Views
             SteamAuthBusy = busy;
         }
 
+        private static string Loc(string key, string fallback = null) =>
+            ResourceProvider.GetString(key) ?? fallback ?? key;
+
         // -----------------------------
         // Cache actions
         // -----------------------------
@@ -196,24 +146,13 @@ namespace FriendsAchievementFeed.Views
             try
             {
                 _plugin.FeedService.Cache.ClearCache();
-
                 var stillPresent = _plugin.FeedService.Cache.CacheFileExists();
-                if (!stillPresent)
-                {
-                    _plugin.PlayniteApi.Dialogs.ShowMessage(
-                        ResourceProvider.GetString("LOCFriendsAchFeed_Settings_Cache_Wiped") ?? "Cache wiped.",
-                        "Friends Achievement Feed",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                }
-                else
-                {
-                    _plugin.PlayniteApi.Dialogs.ShowMessage(
-                        ResourceProvider.GetString("LOCFriendsAchFeed_Settings_Cache_WipeFailed") ?? "Failed to wipe cache (files remain).",
-                        "Friends Achievement Feed",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Error);
-                }
+                
+                var (msg, img) = !stillPresent
+                    ? (Loc("LOCFriendsAchFeed_Settings_Cache_Wiped", "Cache wiped."), MessageBoxImage.Information)
+                    : (Loc("LOCFriendsAchFeed_Settings_Cache_WipeFailed", "Failed to wipe cache (files remain)."), MessageBoxImage.Error);
+                
+                _plugin.PlayniteApi.Dialogs.ShowMessage(msg, "Friends Achievement Feed", MessageBoxButton.OK, img);
             }
             catch (Exception ex)
             {
@@ -233,12 +172,12 @@ namespace FriendsAchievementFeed.Views
         {
             try
             {
-                FriendsStatusText.Text = ResourceProvider.GetString("LOCFriendsAchFeed_Progress_LoadingFriends") ?? "Loading friends…";
+                FriendsStatusText.Text = Loc("LOCFriendsAchFeed_Progress_LoadingFriends", "Loading friends…");
 
                 var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
                 if (string.IsNullOrWhiteSpace(self))
                 {
-                    FriendsStatusText.Text = ResourceProvider.GetString("LOCFriendsAchFeed_Info_AuthenticateWithSteam") ?? "Authenticate with Steam (General tab) to load friends.";
+                    FriendsStatusText.Text = Loc("LOCFriendsAchFeed_Info_AuthenticateWithSteam", "Authenticate with Steam (General tab) to load friends.");
                     return;
                 }
 
@@ -254,15 +193,14 @@ namespace FriendsAchievementFeed.Views
                 Dispatcher.Invoke(() =>
                 {
                     Friends = _friends;
-
                     FriendsStatusText.Text = _friends.Count > 0
-                        ? string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Info_LoadedFriends") ?? "Loaded {0} friends.", _friends.Count)
-                        : ResourceProvider.GetString("LOCFriendsAchFeed_Info_NoFriends") ?? "No friends found or profile private.";
+                        ? string.Format(Loc("LOCFriendsAchFeed_Info_LoadedFriends", "Loaded {0} friends."), _friends.Count)
+                        : Loc("LOCFriendsAchFeed_Info_NoFriends", "No friends found or profile private.");
                 });
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() => FriendsStatusText.Text = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedLoadFriends") ?? "Failed to load friends: {0}", ex.Message));
+                Dispatcher.Invoke(() => FriendsStatusText.Text = string.Format(Loc("LOCFriendsAchFeed_Error_FailedLoadFriends", "Failed to load friends: {0}"), ex.Message));
             }
         }
 
@@ -325,7 +263,7 @@ namespace FriendsAchievementFeed.Views
 
                 _plugin.PlayniteApi.Dialogs.ActivateGlobalProgress(async a =>
                 {
-                    a.Text = ResourceProvider.GetString("LOCFriendsAchFeed_Progress_FamilySharing_Start") ?? "Starting family-sharing scan…";
+                    a.Text = Loc("LOCFriendsAchFeed_Progress_FamilySharing_Start", "Starting family-sharing scan…");
                     a.IsIndeterminate = true;
 
                     using var cancelReg = a.CancelToken.Register(() => _plugin.FeedService.CancelActiveRebuild());
@@ -355,11 +293,11 @@ namespace FriendsAchievementFeed.Views
                     {
                         _plugin.FeedService.RebuildProgress -= handler;
                     }
-                }, new GlobalProgressOptions(ResourceProvider.GetString("LOCFriendsAchFeed_Progress_FamilySharing_Title") ?? "Friends Achievement Feed — Family Sharing Scan") { IsIndeterminate = true, Cancelable = true });
+                }, new GlobalProgressOptions(Loc("LOCFriendsAchFeed_Progress_FamilySharing_Title", "Friends Achievement Feed — Family Sharing Scan")) { IsIndeterminate = true, Cancelable = true });
             }
             catch (Exception ex)
             {
-                MessageBox.Show(string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Error_FamilySharingStartFailed") ?? "Failed to start family-sharing scan: {0}", ex.Message));
+                MessageBox.Show(string.Format(Loc("LOCFriendsAchFeed_Error_FamilySharingStartFailed", "Failed to start family-sharing scan: {0}"), ex.Message));
             }
         }
 

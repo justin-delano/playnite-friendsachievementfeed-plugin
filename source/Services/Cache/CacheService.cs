@@ -48,9 +48,9 @@ namespace FriendsAchievementFeed.Services
 
         private static DateTime AsUtc(DateTime dt)
         {
-            if (dt.Kind == DateTimeKind.Utc) return dt;
-            if (dt.Kind == DateTimeKind.Local) return dt.ToUniversalTime();
-            return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            return dt.Kind == DateTimeKind.Utc ? dt : 
+                   (dt.Kind == DateTimeKind.Local ? dt.ToUniversalTime() : 
+                   DateTime.SpecifyKind(dt, DateTimeKind.Utc));
         }
 
         private void RaiseCacheChangedSafe()
@@ -58,7 +58,7 @@ namespace FriendsAchievementFeed.Services
             try { CacheChanged?.Invoke(this, EventArgs.Empty); }
             catch (Exception e)
             {
-                _logger?.Error(e, ResourceProvider.GetString("LOCFriendsAchFeed_Error_NotifySubscribers"));
+                _logger?.Error(e, ResourceHelper.ErrorNotifySubscribers);
             }
         }
 
@@ -138,9 +138,12 @@ namespace FriendsAchievementFeed.Services
 
         private static string PerGameKey(FeedEntry e)
         {
-            if (e == null) return string.Empty;
-            if (e.PlayniteGameId.HasValue) return e.PlayniteGameId.Value.ToString();
-            if (e.AppId > 0) return "app_" + e.AppId;
+            if (e == null) 
+                return string.Empty;
+            if (e.PlayniteGameId.HasValue) 
+                return e.PlayniteGameId.Value.ToString();
+            if (e.AppId > 0) 
+                return "app_" + e.AppId;
             return "unknown";
         }
 
@@ -210,7 +213,7 @@ namespace FriendsAchievementFeed.Services
             }
             catch (Exception e)
             {
-                _logger?.Error(e, ResourceProvider.GetString("LOCFriendsAchFeed_Error_FileOperationFailed"));
+                _logger?.Error(e, ResourceHelper.ErrorFileOperationFailed);
             }
         }
 
@@ -382,10 +385,10 @@ namespace FriendsAchievementFeed.Services
                     continue;
 
                 var data = _storage.ReadFamily(f);
-                if (data?.SteamIds != null && data.SteamIds.Count > 0)
+                if (data?.SteamIds != null && data.SteamIds.Any())
                 {
                     var normalized = NormalizeSteamIds(data.SteamIds);
-                    if (normalized.Count > 0)
+                    if (normalized.Any())
                         map[key] = normalized;
                 }
             }

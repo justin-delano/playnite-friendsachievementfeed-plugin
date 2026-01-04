@@ -22,46 +22,27 @@ namespace FriendsAchievementFeed.Views
             var hasGame = !string.IsNullOrWhiteSpace(GameSearchText);
             var hasAch = !string.IsNullOrWhiteSpace(AchievementSearchText);
 
-            var hasAnySearch = hasFriend || hasGame || hasAch;
-
-            if (!hasAnySearch && DefaultVisibleIds != null)
+            if (!(hasFriend || hasGame || hasAch))
             {
-                if (string.IsNullOrEmpty(e.Id) || !DefaultVisibleIds.Contains(e.Id))
-                {
-                    return false;
-                }
+                return DefaultVisibleIds == null || (!string.IsNullOrEmpty(e.Id) && DefaultVisibleIds.Contains(e.Id));
             }
 
-            if (hasFriend)
-            {
-                if (string.IsNullOrWhiteSpace(e.FriendPersonaName) ||
-                    e.FriendPersonaName.IndexOf(FriendSearchText, StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    return false;
-                }
-            }
+            if (hasFriend && (string.IsNullOrWhiteSpace(e.FriendPersonaName) ||
+                e.FriendPersonaName.IndexOf(FriendSearchText, StringComparison.OrdinalIgnoreCase) < 0))
+                return false;
 
-            if (hasGame)
-            {
-                if (string.IsNullOrWhiteSpace(e.GameName) ||
-                    e.GameName.IndexOf(GameSearchText, StringComparison.OrdinalIgnoreCase) < 0)
-                {
-                    return false;
-                }
-            }
+            if (hasGame && (string.IsNullOrWhiteSpace(e.GameName) ||
+                e.GameName.IndexOf(GameSearchText, StringComparison.OrdinalIgnoreCase) < 0))
+                return false;
 
             if (hasAch)
             {
                 var nameMatch = !string.IsNullOrWhiteSpace(e.AchievementDisplayName) &&
-                                e.AchievementDisplayName.IndexOf(AchievementSearchText, StringComparison.OrdinalIgnoreCase) >= 0;
-
+                    e.AchievementDisplayName.IndexOf(AchievementSearchText, StringComparison.OrdinalIgnoreCase) >= 0;
                 var descMatch = !string.IsNullOrWhiteSpace(e.AchievementDescription) &&
-                                e.AchievementDescription.IndexOf(AchievementSearchText, StringComparison.OrdinalIgnoreCase) >= 0;
-
-                if (!(nameMatch || descMatch))
-                {
-                    return false;
-                }
+                    e.AchievementDescription.IndexOf(AchievementSearchText, StringComparison.OrdinalIgnoreCase) >= 0;
+                
+                if (!nameMatch && !descMatch) return false;
             }
 
             return true;

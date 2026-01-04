@@ -1,15 +1,12 @@
 using System;
-using System.Linq;
-using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Media;
 using Playnite.SDK;
 
 namespace Common
 {
-    public class PlayniteUiHelper
+    public static class PlayniteUiHelper
     {
         public static void HandleEsc(object sender, KeyEventArgs e)
         {

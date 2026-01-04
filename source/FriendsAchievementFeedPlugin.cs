@@ -331,14 +331,8 @@ namespace FriendsAchievementFeed
         private void ProcessGameItems(System.Collections.IList items, HashSet<int> appIds)
         {
             if (items == null) return;
-
-            foreach (var item in items)
-            {
-                if (item is Game game && int.TryParse(game.GameId, out var appId) && appId != 0)
-                {
-                    appIds.Add(appId);
-                }
-            }
+            foreach (var game in items.OfType<Game>().Where(g => int.TryParse(g.GameId, out var id) && id != 0))
+                appIds.Add(int.Parse(game.GameId));
         }
 
         // === Game selection / theme flag wiring ===

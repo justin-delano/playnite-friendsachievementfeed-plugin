@@ -38,23 +38,16 @@ namespace FriendsAchievementFeed.Services
         private static string BuildAchievementsUrl(string steamId64, int appId) =>
             $"https://steamcommunity.com/profiles/{steamId64}/stats/{appId}/?tab=achievements&l=english";
 
-        private string GetApiKeyTrimmed()
-        {
-            var key = _plugin?.Settings?.SteamApiKey;
-            return string.IsNullOrWhiteSpace(key) ? null : key.Trim();
-        }
+        private string GetApiKeyTrimmed() => 
+            _plugin?.Settings?.SteamApiKey?.Trim();
 
         public Task<bool> RefreshCookiesAsync(CancellationToken cancel)
             => _steam.RefreshCookiesHeadlessAsync(cancel);
 
-        private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct)
-        {
-            if (!string.IsNullOrWhiteSpace(steamIdMaybe) && ulong.TryParse(steamIdMaybe, out _))
-                return steamIdMaybe.Trim();
-
-            var self = await _steam.GetSelfSteamId64Async(ct).ConfigureAwait(false);
-            return string.IsNullOrWhiteSpace(self) ? null : self.Trim();
-        }
+        private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct) =>
+            ValidationHelper.IsValidSteamId64(steamIdMaybe)
+                ? steamIdMaybe.Trim()
+                : (await _steam.GetSelfSteamId64Async(ct).ConfigureAwait(false))?.Trim();
 
         // ---------------------------------------------------------------------
         // Owned games playtimes
@@ -79,15 +72,10 @@ namespace FriendsAchievementFeed.Services
                 if (dict.Count == 0) _ownedGamePlaytimeCache.TryRemove(resolved, out _);
                 return dict;
             }
-            catch (OperationCanceledException)
-            {
-                _ownedGamePlaytimeCache.TryRemove(resolved, out _);
-                throw;
-            }
             catch
             {
                 _ownedGamePlaytimeCache.TryRemove(resolved, out _);
-                return new Dictionary<int, int>();
+                throw;
             }
         }
 
@@ -110,44 +98,54 @@ namespace FriendsAchievementFeed.Services
         // Auth test (HTML profile check)
         // ---------------------------------------------------------------------
 
+        private static string Loc(string key, string fallback = null) =>
+            ResourceProvider.GetString(key) ?? fallback;
+
+        private static (bool IsRateLimited, bool IsEmpty, bool IsLoggedOut) CheckProfilePage(SteamClient.SteamPageResult page)
+        {
+            var statusCode = (int)(page?.StatusCode ?? 0);
+            var html = page?.Html ?? string.Empty;
+            
+            return (
+                IsRateLimited: statusCode == 429,
+                IsEmpty: string.IsNullOrWhiteSpace(html),
+                IsLoggedOut: SteamClient.LooksLoggedOutHeader(html)
+            );
+        }
+
         public async Task<(bool Success, string Message)> TestSteamAuthAsync(string steamUserId)
         {
             try
             {
                 var resolved = await ResolveSteamId64Async(steamUserId, CancellationToken.None).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(resolved))
-                {
-                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamSessionNotFound"));
-                }
+                    return (false, Loc("LOCFriendsAchFeed_Error_SteamSessionNotFound"));
 
                 var page = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
-                var html = page?.Html ?? string.Empty;
+                var check = CheckProfilePage(page);
 
-                if ((int)(page?.StatusCode ?? 0) == 429)
-                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamRateLimited"));
+                if (check.IsRateLimited)
+                    return (false, Loc("LOCFriendsAchFeed_Error_SteamRateLimited"));
+                if (check.IsEmpty)
+                    return (false, Loc("LOCFriendsAchFeed_Error_NoProfileReturned"));
 
-                if (string.IsNullOrWhiteSpace(html))
-                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_NoProfileReturned"));
-
-                if (SteamClient.LooksLoggedOutHeader(html))
+                if (check.IsLoggedOut)
                 {
                     await _steam.RefreshCookiesHeadlessAsync(CancellationToken.None).ConfigureAwait(false);
+                    page = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
+                    check = CheckProfilePage(page);
 
-                    var page2 = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
-                    html = page2?.Html ?? string.Empty;
-
-                    if ((int)(page2?.StatusCode ?? 0) == 429)
-                        return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamRateLimited"));
-
-                    if (string.IsNullOrWhiteSpace(html) || SteamClient.LooksLoggedOutHeader(html))
-                        return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamCookiesInvalid"));
+                    if (check.IsRateLimited)
+                        return (false, Loc("LOCFriendsAchFeed_Error_SteamRateLimited"));
+                    if (check.IsEmpty || check.IsLoggedOut)
+                        return (false, Loc("LOCFriendsAchFeed_Error_SteamCookiesInvalid"));
                 }
 
+                var html = page?.Html ?? string.Empty;
                 if (html.IndexOf("actual_persona_name", StringComparison.OrdinalIgnoreCase) < 0)
-                    return (false, ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamProfileMarkersNotFound"));
+                    return (false, Loc("LOCFriendsAchFeed_Error_SteamProfileMarkersNotFound"));
 
-                var okMsg = ResourceProvider.GetString("LOCFriendsAchFeed_Settings_SteamAuth_OK") ?? "Steam auth OK";
-                return (true, okMsg);
+                return (true, Loc("LOCFriendsAchFeed_Settings_SteamAuth_OK", "Steam auth OK"));
             }
             catch (Exception ex)
             {

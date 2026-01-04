@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Views;
+using FriendsAchievementFeed.Views.Helpers;
 using Playnite.SDK;
 using Playnite.SDK.Controls;
 
@@ -117,29 +118,16 @@ namespace FriendsAchievementFeed.Views.Shared
         {
             try
             {
-                if (e.ChangedButton != MouseButton.Left)
-                {
-                    return;
-                }
+                if (e.ChangedButton != MouseButton.Left) return;
 
                 if (sender is FrameworkElement fe)
                 {
-                    string steamId = null;
-
-                    if (fe.DataContext is FeedEntry entry)
-                    {
-                        steamId = entry.FriendSteamId;
-                    }
-                    else if (fe.DataContext is FeedGroup group)
-                    {
-                        steamId = group.FriendSteamId;
-                    }
+                    var steamId = fe.DataContext is FeedEntry entry
+                        ? entry.FriendSteamId
+                        : (fe.DataContext is FeedGroup group ? group.FriendSteamId : null);
 
                     if (!string.IsNullOrWhiteSpace(steamId))
-                    {
-                        var url = $"https://steamcommunity.com/profiles/{steamId}";
-                        OpenUrlInWebViewOrDefault(url);
-                    }
+                        GameNavigationHelper.NavigateToFriendProfile(steamId);
 
                     ClearParentListBoxSelection(fe);
                     e.Handled = true;
@@ -155,48 +143,14 @@ namespace FriendsAchievementFeed.Views.Shared
         {
             try
             {
-                if (e.ChangedButton != MouseButton.Left)
-                {
-                    return;
-                }
+                if (e.ChangedButton != MouseButton.Left) return;
 
                 if (sender is FrameworkElement fe)
                 {
-                    FeedEntry sample = null;
-
                     if (fe.DataContext is FeedEntry entry)
-                    {
-                        sample = entry;
-                    }
+                        GameNavigationHelper.NavigateToGame(entry);
                     else if (fe.DataContext is FeedGroup group)
-                    {
-                        sample = group.Achievements?.FirstOrDefault();
-                    }
-
-                    if (sample != null)
-                    {
-                        if (sample.PlayniteGameId.HasValue)
-                        {
-                            API.Instance.MainView.SelectGame(sample.PlayniteGameId.Value);
-                            API.Instance.MainView.SwitchToLibraryView();
-                        }
-                        else if (sample.AppId > 0)
-                        {
-                            var url = $"https://store.steampowered.com/app/{sample.AppId}";
-                            OpenUrlInWebViewOrDefault(url);
-                        }
-                        else if (fe.DataContext is FeedGroup grp && !string.IsNullOrWhiteSpace(grp.GameName))
-                        {
-                            var found = API.Instance.Database.Games
-                                .FirstOrDefault(g => string.Equals(g.Name, grp.GameName, StringComparison.OrdinalIgnoreCase));
-
-                            if (found != null)
-                            {
-                                API.Instance.MainView.SelectGame(found.Id);
-                                API.Instance.MainView.SwitchToLibraryView();
-                            }
-                        }
-                    }
+                        GameNavigationHelper.NavigateToGame(group);
 
                     ClearParentListBoxSelection(fe);
                     e.Handled = true;
@@ -208,35 +162,7 @@ namespace FriendsAchievementFeed.Views.Shared
             }
         }
 
-        private void OpenUrlInWebViewOrDefault(string url, int width = 900, int height = 700)
-        {
-            try
-            {
-                var webViews = API.Instance.WebViews;
-                if (webViews != null)
-                {
-                    using (var view = webViews.CreateView(width, height, Colors.Black))
-                    {
-                        view.Navigate(url);
-                        view.OpenDialog();
-                    }
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"OpenUrlInWebView failed: {ex.Message}");
-            }
 
-            try
-            {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Fallback browser launch failed: {ex.Message}");
-            }
-        }
 
         public static readonly DependencyProperty ExtraFiltersContentProperty =
             DependencyProperty.Register(nameof(ExtraFiltersContent), typeof(object), typeof(FeedViewControl));

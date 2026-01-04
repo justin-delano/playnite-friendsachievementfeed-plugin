@@ -64,11 +64,7 @@ namespace FriendsAchievementFeed.Views
         {
             if (e.PropertyName == nameof(FriendsAchievementFeedSettings.GameFeedTabHeight))
             {
-                var h = _pluginSettings?.GameFeedTabHeight ?? 1000;
-                Application.Current?.Dispatcher?.BeginInvoke(new Action(() =>
-                {
-                    MainControl.Height = h > 0 ? h : 1000;
-                }));
+                Application.Current?.Dispatcher?.BeginInvoke(new Action(ApplyGameViewLayout));
             }
         }
 
@@ -89,15 +85,8 @@ namespace FriendsAchievementFeed.Views
         {
             try
             {
-                try
-                {
-                    var h = _pluginSettings?.GameFeedTabHeight ?? 1000;
-                    MainControl.Height = h > 0 ? h : 1000;
-                }
-                catch
-                {
-                    MainControl.Height = 1000;
-                }
+                var h = _pluginSettings?.GameFeedTabHeight ?? 1000;
+                MainControl.Height = h > 0 ? h : 1000;
 
                 MainControl.Margin = new Thickness(0, 8, 0, 0);
             }

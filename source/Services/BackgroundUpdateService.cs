@@ -56,7 +56,7 @@ namespace FriendsAchievementFeed.Services
                 }
                 catch (Exception ex)
                 {
-                    var msg = L("LOCFriendsAchFeed_Error_Periodic_InitialCheckFailed", "Periodic update initial check failed.");
+                    var msg = ResourceHelper.GetString("LOCFriendsAchFeed_Error_Periodic_InitialCheckFailed", "Periodic update initial check failed.");
                     _logger.Error(ex, msg);
                 }
 
@@ -103,11 +103,11 @@ namespace FriendsAchievementFeed.Services
                 {
                     await PerformUpdateIfNeeded(interval, token).ConfigureAwait(false);
                 }
-                    catch (Exception ex)
-                    {
-                        var msg = L("LOCFriendsAchFeed_Error_Periodic_UpdateFailed", "Periodic update failed.");
-                        _logger.Error(ex, msg);
-                    }
+                catch (Exception ex)
+                {
+                    var msg = ResourceHelper.GetString("LOCFriendsAchFeed_Error_Periodic_UpdateFailed", "Periodic update failed.");
+                    _logger.Error(ex, msg);
+                }
 
                 await DelayNextUpdate(interval, token).ConfigureAwait(false);
             }
@@ -153,19 +153,14 @@ namespace FriendsAchievementFeed.Services
             }
             catch (Exception ex)
             {
-                var msg = L("LOCFriendsAchFeed_Error_Periodic_UpdateFailed", "Periodic update failed.");
+                var msg = ResourceHelper.GetString("LOCFriendsAchFeed_Error_Periodic_UpdateFailed", "Periodic update failed.");
                 _logger.Error(ex, msg);
             }
         }
 
-        private string L(string key, string fallback)
-        {
-            return ResourceProvider.GetString(key) ?? fallback;
-        }
-
         private void HandleUpdateCompletion()
         {
-            var lastStatus = _feedService.GetLastRebuildStatus() ?? ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Completed");
+            var lastStatus = _feedService.GetLastRebuildStatus() ?? ResourceHelper.RebuildCompleted;
             _notifications?.ShowPeriodicStatus(lastStatus);
             _onUpdateCompleted?.Invoke();
         }

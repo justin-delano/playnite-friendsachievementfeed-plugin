@@ -13,11 +13,11 @@ using System.Net;
 using System.Net.Http;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using FriendsAchievementFeed.Services.Steam;
 
 namespace FriendsAchievementFeed.Services
 {
@@ -126,22 +126,12 @@ namespace FriendsAchievementFeed.Services
         private const string DefaultUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-        private static readonly string[] SteamSessionCookieNames = { "steamLoginSecure", "sessionid" };
-
-        // Note: leaving these defined if referenced elsewhere; otherwise safe to delete.
-        private const ulong SteamId64Base = 76561197960265728UL;
-        private const int FriendsPageSize = 200;
-        private const int FriendsMaxPages = 200;
-
         private const int MaxAttempts = 3;
-        private const int PlayerSummariesBatchSize = 100; // Steam API limit per call :contentReference[oaicite:2]{index=2}
+        private const int PlayerSummariesBatchSize = 100; // Steam API limit per call
 
         // Session validation intervals
         private static readonly TimeSpan SessionCheckInterval = TimeSpan.FromMinutes(30);
         private static readonly TimeSpan CookieRefreshInterval = TimeSpan.FromHours(6);
-
-        private static readonly TimeZoneInfo SteamBaseTimeZone =
-            TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
 
         public sealed class SteamPageResult
         {
@@ -155,6 +145,7 @@ namespace FriendsAchievementFeed.Services
         private readonly IPlayniteAPI _api;
         private readonly ILogger _logger;
         private readonly SteamSessionStore _sessionStore;
+        private readonly SteamApiHelper _apiHelper;
 
         private readonly CookieContainer _cookieJar = new CookieContainer();
         private readonly object _cookieLock = new object();
@@ -180,6 +171,8 @@ namespace FriendsAchievementFeed.Services
             _sessionStore = new SteamSessionStore(pluginUserDataPath);
 
             BuildHttpClientsOnce();
+            _apiHelper = new SteamApiHelper(_apiHttp, _logger);
+            
             LoadSessionData();
             
             // Load cookies from CEF on startup for immediate use
@@ -224,25 +217,7 @@ namespace FriendsAchievementFeed.Services
         /// </summary>
         private bool HasSteamSessionCookies()
         {
-            try
-            {
-                using (var view = _api.WebViews.CreateOffscreenView())
-                {
-                    var cookies = view.GetCookies();
-                    if (cookies == null) return false;
-
-                    return cookies.Any(c =>
-                        c != null &&
-                        !string.IsNullOrWhiteSpace(c.Domain) &&
-                        IsSteamDomain(c.Domain) &&
-                        SteamSessionCookieNames.Any(n => string.Equals(c.Name, n, StringComparison.OrdinalIgnoreCase)));
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Debug(ex, "[FAF] Failed to check Steam session cookies.");
-                return false;
-            }
+            return SteamCookieManager.HasSteamSessionCookies(_api, _logger);
         }
 
         /// <summary>
@@ -279,7 +254,7 @@ namespace FriendsAchievementFeed.Services
 
                                 if (steamLogin != null)
                                 {
-                                    extractedId = TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
+                                    extractedId = SteamCookieManager.TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
                                     success = true;
                                 }
                             }
@@ -356,7 +331,7 @@ namespace FriendsAchievementFeed.Services
 
                                 if (steamLogin != null)
                                 {
-                                    extractedId = TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
+                                    extractedId = SteamCookieManager.TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
                                     loggedIn = !string.IsNullOrWhiteSpace(extractedId);
                                 }
                             }
@@ -385,20 +360,7 @@ namespace FriendsAchievementFeed.Services
         public void ClearSavedCookies()
         {
             // Clear cookies from CEF
-            try
-            {
-                using (var view = _api.WebViews.CreateOffscreenView())
-                {
-                    view.DeleteDomainCookies(".steamcommunity.com");
-                    view.DeleteDomainCookies("steamcommunity.com");
-                    view.DeleteDomainCookies(".steampowered.com");
-                    view.DeleteDomainCookies("steampowered.com");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Debug(ex, "[FAF] Failed to clear Steam cookies from CEF.");
-            }
+            SteamCookieManager.ClearSteamCookiesFromCef(_api, _logger);
 
             _sessionStore.Clear();
             _selfSteamId64 = null;
@@ -438,7 +400,7 @@ namespace FriendsAchievementFeed.Services
 
                         if (steamLogin != null)
                         {
-                            var id = TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
+                            var id = SteamCookieManager.TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
                             if (!string.IsNullOrWhiteSpace(id))
                             {
                                 _selfSteamId64 = id;
@@ -504,69 +466,9 @@ namespace FriendsAchievementFeed.Services
         /// </summary>
         private void LoadCookiesFromCefIntoJar()
         {
-            try
+            lock (_cookieLock)
             {
-                using (var view = _api.WebViews.CreateOffscreenView())
-                {
-                    var cookies = view.GetCookies();
-                    if (cookies == null) return;
-
-                    lock (_cookieLock)
-                    {
-                        var steamCookies = cookies
-                            .Where(c => c != null && !string.IsNullOrWhiteSpace(c.Domain))
-                            .Where(c => IsSteamDomain(c.Domain))
-                            .ToList();
-
-                        foreach (var c in steamCookies)
-                        {
-                            try
-                            {
-                                var domain = c.Domain.TrimStart('.');
-                                var path = string.IsNullOrWhiteSpace(c.Path) ? "/" : c.Path;
-                                
-                                var cookie = new Cookie(c.Name, c.Value, path)
-                                {
-                                    Domain = domain,
-                                    Secure = c.Secure,
-                                    HttpOnly = c.HttpOnly
-                                };
-
-                                if (c.Expires.HasValue && c.Expires.Value > DateTime.MinValue)
-                                {
-                                    var expires = c.Expires.Value;
-                                    cookie.Expires = expires.Kind == DateTimeKind.Utc ? expires : expires.ToUniversalTime();
-                                }
-
-                                var uri = GetAddUriForDomain(domain);
-                                _cookieJar.Add(uri, cookie);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger?.Debug(ex, $"[FAF] Failed to add cookie {c.Name} to jar");
-                            }
-                        }
-
-                        // Force Pacific Time timezone offset (-28800 seconds = UTC-8)
-                        // This ensures Steam returns achievement times in PST/PDT consistently
-                        try
-                        {
-                            var tzCookie = new Cookie("timezoneOffset", "-28800,0", "/")
-                            {
-                                Domain = "steamcommunity.com"
-                            };
-                            _cookieJar.Add(CommunityBase, tzCookie);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.Debug(ex, "[FAF] Failed to set timezoneOffset cookie");
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Debug(ex, "[FAF] Failed to load cookies from CEF into jar");
+                SteamCookieManager.LoadCefCookiesIntoJar(_api, _cookieJar, _logger);
             }
         }
 
@@ -577,8 +479,7 @@ namespace FriendsAchievementFeed.Services
                 var communityCookies = _cookieJar.GetCookies(CommunityBase);
                 var storeCookies = _cookieJar.GetCookies(StoreBase);
 
-                return (communityCookies != null && communityCookies.Count > 0) ||
-                       (storeCookies != null && storeCookies.Count > 0);
+                return communityCookies?.Count > 0 || storeCookies?.Count > 0;
             }
             catch
             {
@@ -790,8 +691,8 @@ namespace FriendsAchievementFeed.Services
 
         public async Task<List<SteamPlayerSummaries>> GetPlayerSummariesAsync(string apiKey, IEnumerable<ulong> steamIds, CancellationToken ct)
         {
-            var ids = steamIds?
-                .Where(x => x > 0)
+            var ids = steamIds?.
+                Where(x => x > 0)
                 .Distinct()
                 .ToList() ?? new List<ulong>();
 
@@ -802,77 +703,26 @@ namespace FriendsAchievementFeed.Services
             if (string.IsNullOrWhiteSpace(apiKey))
                 return await GetPlayerSummariesFromHtmlAsync(ids, ct).ConfigureAwait(false);
 
-            // Prefer API: one call per 100 ids.
-            var byId = new Dictionary<ulong, SteamPlayerSummaries>();
-
-            foreach (var batch in Batch(ids, PlayerSummariesBatchSize))
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var idParam = string.Join(",", batch);
-                var url =
-                    "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/" +
-                    $"?key={Uri.EscapeDataString(apiKey.Trim())}" +
-                    $"&steamids={Uri.EscapeDataString(idParam)}";
-
-                try
-                {
-                    using (var req = new HttpRequestMessage(HttpMethod.Get, url))
-                    {
-                        req.Headers.TryAddWithoutValidation("User-Agent", DefaultUserAgent);
-                        req.Headers.TryAddWithoutValidation("Accept", "application/json");
-
-                        using (var resp = await _apiHttp.SendAsync(req, ct).ConfigureAwait(false))
-                        {
-                            if (!resp.IsSuccessStatusCode)
-                                continue;
-
-                            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                            if (string.IsNullOrWhiteSpace(json))
-                                continue;
-
-                            var root = Serialization.FromJson<PlayerSummariesRoot>(json);
-                            var players = root?.Response?.Players;
-                            if (players == null || players.Count == 0)
-                                continue;
-
-                            foreach (var p in players)
-                            {
-                                if (p == null) continue;
-                                if (!ulong.TryParse(p.SteamId, out var sid) || sid <= 0) continue;
-
-                                byId[sid] = new SteamPlayerSummaries
-                                {
-                                    SteamId = p.SteamId,
-                                    PersonaName = p.PersonaName,
-                                    Avatar = p.Avatar,
-                                    AvatarMedium = p.AvatarMedium,
-                                    AvatarFull = p.AvatarFull
-                                };
-                            }
-                        }
-                    }
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger?.Debug(ex, "[FAF] GetPlayerSummaries API request failed (batch).");
-                }
-            }
-
-            // Preserve original order where possible.
-            var ordered = new List<SteamPlayerSummaries>(ids.Count);
-            foreach (var id in ids)
-            {
-                if (byId.TryGetValue(id, out var s) && s != null)
-                    ordered.Add(s);
-            }
-
-            // If the API returned nothing at all, do a last-resort HTML fallback (optional).
-            if (ordered.Count == 0)
+            // Prefer API via helper
+            var apiResults = await _apiHelper.GetPlayerSummariesAsync(apiKey, ids, ct).ConfigureAwait(false);
+            
+            // If API returned nothing at all, do a last-resort HTML fallback
+            if (apiResults.Count == 0)
                 return await GetPlayerSummariesFromHtmlAsync(ids, ct).ConfigureAwait(false);
 
-            return ordered;
+            return apiResults;
+        }
+
+        private static IEnumerable<List<ulong>> Batch(IReadOnlyList<ulong> ids, int batchSize)
+        {
+            for (int i = 0; i < ids.Count; i += batchSize)
+            {
+                var size = Math.Min(batchSize, ids.Count - i);
+                var chunk = new List<ulong>(size);
+                for (int j = 0; j < size; j++)
+                    chunk.Add(ids[i + j]);
+                yield return chunk;
+            }
         }
 
         private async Task<List<SteamPlayerSummaries>> GetPlayerSummariesFromHtmlAsync(IReadOnlyList<ulong> steamIds, CancellationToken ct)
@@ -910,18 +760,6 @@ namespace FriendsAchievementFeed.Services
             public string AvatarFull { get; set; }     // avatarfull
         }
 
-        private static IEnumerable<List<ulong>> Batch(IReadOnlyList<ulong> ids, int batchSize)
-        {
-            for (int i = 0; i < ids.Count; i += batchSize)
-            {
-                var size = Math.Min(batchSize, ids.Count - i);
-                var chunk = new List<ulong>(size);
-                for (int j = 0; j < size; j++)
-                    chunk.Add(ids[i + j]);
-                yield return chunk;
-            }
-        }
-
         // ---------------------------------------------------------------------
         // Friends (API)
         // ---------------------------------------------------------------------
@@ -955,7 +793,7 @@ namespace FriendsAchievementFeed.Services
 
         public async Task<List<ulong>> GetFriendSteamIdsAsync(string steamId64, string apiKey, CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(steamId64))
+            if (!ValidationHelper.HasSteamCredentials(steamId64, apiKey))
                 return new List<ulong>();
 
             try
@@ -1029,7 +867,7 @@ namespace FriendsAchievementFeed.Services
                     row.SelectSingleNode(".//div[contains(@class,'achieveUnlockTime')]")?.InnerText ?? ""
                 ).Trim();
 
-                var unlockUtc = TryParseSteamUnlockTimeEnglishToUtc(unlockText);
+                var unlockUtc = SteamTimeParser.TryParseSteamUnlockTimeEnglishToUtc(unlockText);
 
                 if (!includeLocked && !unlockUtc.HasValue)
                     continue;
@@ -1148,7 +986,8 @@ namespace FriendsAchievementFeed.Services
             }
 
             // If cookies required, ensure session is valid (loads cookies into HttpClient)
-            if (requiresCookies && IsSteamCookieHost(uri))
+            if (requiresCookies && uri.Host.IndexOf("steamcommunity.com", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    uri.Host.IndexOf("steampowered.com", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 await EnsureSessionAsync(ct).ConfigureAwait(false);
             }
@@ -1193,13 +1032,6 @@ namespace FriendsAchievementFeed.Services
             }
 
             return result;
-        }
-
-        private static bool IsSteamCookieHost(Uri uri)
-        {
-            if (uri == null) return false;
-            return uri.Host.IndexOf("steamcommunity.com", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   uri.Host.IndexOf("steampowered.com", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         // ---------------------------------------------------------------------
@@ -1275,116 +1107,7 @@ namespace FriendsAchievementFeed.Services
 
         private SteamPlayerSummaries TryParseProfileHtmlToSummary(ulong id, string html)
         {
-            if (string.IsNullOrWhiteSpace(html)) return null;
-
-            try
-            {
-                var doc = new HtmlDocument();
-                doc.LoadHtml(html);
-
-                var name = WebUtility.HtmlDecode(
-                    doc.DocumentNode.SelectSingleNode("//span[contains(@class,'actual_persona_name')]")?.InnerText ?? ""
-                ).Trim();
-
-                if (string.IsNullOrEmpty(name)) return null;
-
-                var avatar = doc.DocumentNode.SelectSingleNode("//meta[@property='og:image']")
-                    ?.GetAttributeValue("content", "") ?? "";
-
-                return new SteamPlayerSummaries
-                {
-                    SteamId = id.ToString(),
-                    PersonaName = name,
-                    Avatar = avatar,
-                    AvatarMedium = avatar,
-                    AvatarFull = avatar
-                };
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static DateTime? TryParseSteamUnlockTimeEnglishToUtc(string text)
-        {
-            var flat = Regex.Replace(text ?? "", @"\s+", " ").Trim();
-            if (flat.Length == 0) return null;
-
-            var m = Regex.Match(
-                flat,
-                @"Unlocked\s+(?<date>.+?)\s+@\s+(?<time>\d{1,2}:\d{2}\s*(?:am|pm)?)",
-                RegexOptions.IgnoreCase);
-
-            if (!m.Success) return null;
-
-            var datePart = (m.Groups["date"].Value ?? "").Trim().TrimEnd(',');
-            var timePart = Regex.Replace((m.Groups["time"].Value ?? "").Trim(), @"\s+(am|pm)$", "$1", RegexOptions.IgnoreCase);
-
-            var steamNow = GetSteamNow();
-            var hasYear = Regex.IsMatch(datePart, @"\b\d{4}\b");
-            if (!hasYear)
-                datePart = $"{datePart}, {steamNow.Year}";
-
-            var combined = $"{datePart} {timePart}".Trim();
-            var culture = new CultureInfo("en-US");
-
-            var formats = new[]
-            {
-                "MMM d, yyyy h:mmtt", "MMM dd, yyyy h:mmtt",
-                "MMMM d, yyyy h:mmtt", "MMMM dd, yyyy h:mmtt",
-                "MMM d, yyyy H:mm",   "MMM dd, yyyy H:mm",
-                "MMMM d, yyyy H:mm",  "MMMM dd, yyyy H:mm",
-
-                "MMM d yyyy h:mmtt",  "MMM dd yyyy h:mmtt",
-                "MMMM d yyyy h:mmtt", "MMMM dd yyyy h:mmtt",
-                "MMM d yyyy H:mm",    "MMM dd yyyy H:mm",
-                "MMMM d yyyy H:mm",   "MMMM dd yyyy H:mm",
-
-                "d MMM, yyyy h:mmtt", "dd MMM, yyyy h:mmtt",
-                "d MMMM, yyyy h:mmtt","dd MMMM, yyyy h:mmtt",
-                "d MMM, yyyy H:mm",   "dd MMM, yyyy H:mm",
-                "d MMMM, yyyy H:mm",  "dd MMMM, yyyy H:mm",
-
-                "d MMM yyyy h:mmtt",  "dd MMM yyyy h:mmtt",
-                "d MMMM yyyy h:mmtt", "dd MMMM yyyy h:mmtt",
-                "d MMM yyyy H:mm",    "dd MMM yyyy H:mm",
-                "d MMMM yyyy H:mm",   "dd MMMM yyyy H:mm",
-            };
-
-            if (!DateTime.TryParseExact(combined, formats, culture, DateTimeStyles.AllowWhiteSpaces, out var dt) &&
-                !DateTime.TryParse(combined, culture, DateTimeStyles.AllowWhiteSpaces, out dt))
-            {
-                return null;
-            }
-
-            if (!hasYear)
-            {
-                var steamCandidate = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
-                var steamCandidateLocal = TimeZoneInfo.ConvertTime(steamCandidate, SteamBaseTimeZone);
-
-                if (steamCandidateLocal > steamNow.AddDays(2))
-                    dt = dt.AddYears(-1);
-            }
-
-            try
-            {
-                return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(dt, DateTimeKind.Unspecified), SteamBaseTimeZone);
-            }
-            catch
-            {
-                return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-            }
-        }
-
-        private static DateTime GetSteamNow()
-        {
-            try { return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, SteamBaseTimeZone); }
-            catch (Exception)
-            {
-                // Timezone conversion failed; fallback to local time
-                return DateTime.Now;
-            }
+            return SteamHtmlParser.TryParseProfileHtmlToSummary(id, html);
         }
     }
 }

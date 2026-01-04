@@ -13,11 +13,7 @@ namespace FriendsAchievementFeed.Services
             return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
         }
 
-        public static DateTime? AsUtcKind(DateTime? dt)
-        {
-            if (!dt.HasValue) return null;
-            return AsUtcKind(dt.Value);
-        }
+        public static DateTime? AsUtcKind(DateTime? dt) => dt.HasValue ? AsUtcKind(dt.Value) : (DateTime?)null;
 
         // friend-only persisted entry
         public FeedEntry CreateCachedFriendEntry(
@@ -28,7 +24,6 @@ namespace FriendsAchievementFeed.Services
             DateTime friendUnlockUtc,
             string friendAchievementIconUrl)
         {
-            friendUnlockUtc = AsUtcKind(friendUnlockUtc);
             var apiName = row?.Key ?? string.Empty;
 
             return new FeedEntry
@@ -65,7 +60,7 @@ namespace FriendsAchievementFeed.Services
             if (!string.IsNullOrWhiteSpace(key) && self != null)
             {
                 if (self.UnlockTimesUtc != null && self.UnlockTimesUtc.TryGetValue(key, out var t))
-                    selfUnlock = AsUtcKind(t);
+                    selfUnlock = t;
 
                 if (self.SelfIconUrls != null && self.SelfIconUrls.TryGetValue(key, out var url))
                     selfIcon = url;
@@ -88,11 +83,11 @@ namespace FriendsAchievementFeed.Services
                 AchievementDisplayName = e.AchievementDisplayName,
                 AchievementDescription = e.AchievementDescription,
 
-                FriendUnlockTime = AsUtcKind(e.FriendUnlockTimeUtc),
+                FriendUnlockTime = e.FriendUnlockTimeUtc,
                 FriendAchievementIcon = e.FriendAchievementIcon,
 
                 // self overlay only at UI time
-                SelfUnlockTime = AsUtcKind(selfUnlock),
+                SelfUnlockTime = selfUnlock,
                 SelfAchievementIcon = selfIcon
             };
 
