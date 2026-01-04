@@ -40,6 +40,11 @@ namespace Common
 
         protected void SetValue<T>(ref T property, T value, [CallerMemberName] string propertyName = null)
         {
+            if (EqualityComparer<T>.Default.Equals(property, value))
+            {
+                return;
+            }
+
             property = value;
             OnPropertyChanged(propertyName);
         }

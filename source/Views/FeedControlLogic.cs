@@ -811,7 +811,11 @@ namespace FriendsAchievementFeed.Views
 
         private List<FeedEntry> LoadRawFriendEntriesFromCache(string gameName = null)
         {
-            var all = _feedService.Cache.GetCachedFriendEntries() ?? new List<FeedEntry>();
+            var all = _feedService.Cache.GetCachedFriendEntries();
+            if (all == null || all.Count == 0)
+            {
+                return new List<FeedEntry>();
+            }
 
             if (string.IsNullOrWhiteSpace(gameName))
             {
@@ -921,11 +925,15 @@ namespace FriendsAchievementFeed.Views
                 {
                     _api?.Dialogs?.ShowErrorMessage(message, ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"));
                 }
-                catch
+                catch (Exception ex1)
                 {
                     // last resort fallback
+                    _logger?.Debug(ex1, "[FAF] Failed to show error dialog via API, trying MessageBox.");
                     try { MessageBox.Show(message, ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"), MessageBoxButton.OK, MessageBoxImage.Error); }
-                    catch { /* swallow */ }
+                    catch (Exception ex2)
+                    {
+                        _logger?.Error(ex2, "[FAF] Failed to show error message via both API and MessageBox.");
+                    }
                 }
             });
         }
@@ -977,8 +985,7 @@ namespace FriendsAchievementFeed.Views
                 {
                     RunOnUi(() =>
                     {
-                        try { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_LoadingFromCache"); }
-                        catch { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_LoadingFromCache") ?? "Loading…"; }
+                        StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_LoadingFromCache") ?? "Loading…";
                     });
 
                     await ReloadFromCacheToUiAsync(fromRebuild: false, token).ConfigureAwait(false);
@@ -999,8 +1006,7 @@ namespace FriendsAchievementFeed.Views
 
                     RunOnUi(() =>
                     {
-                        try { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_NoCache_Building"); }
-                        catch { StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_NoCache_Building") ?? "Building cache…"; }
+                        StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_NoCache_Building") ?? "Building cache…";
                     });
 
                     await TriggerRebuild(null, token).ConfigureAwait(false);

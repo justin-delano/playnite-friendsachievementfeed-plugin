@@ -266,10 +266,9 @@ namespace FriendsAchievementFeed.Services
 
                 EnsureFriendFeedLoaded_NoPolicy();
 
-                return _globalFriendFeed?.Entries?
-                           .OrderByDescending(e => e.FriendUnlockTimeUtc)
-                           .ToList()
-                       ?? new List<FeedEntry>();
+                // Entries are already sorted by FriendUnlockTimeUtc in UpdateFriendFeed
+                return _globalFriendFeed?.Entries??
+                       new List<FeedEntry>();
             }
         }
 

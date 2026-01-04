@@ -40,93 +40,81 @@ namespace FriendsAchievementFeed.Services
     }
 
     // -------------------------------------------------------------------------
-    // Persisted cookie snapshot (encrypted with DPAPI)
+    // Steam Session Data (persisted for self Steam ID only - cookies are in CEF)
     // -------------------------------------------------------------------------
 
     [DataContract]
-    internal sealed class StoredCookie
+    internal sealed class SteamSessionData
     {
-        [DataMember] public string Name { get; set; }
-        [DataMember] public string Value { get; set; }
-        [DataMember] public string Domain { get; set; }
-        [DataMember] public string Path { get; set; }
-        [DataMember] public DateTime? ExpiresUtc { get; set; }
-        [DataMember] public bool Secure { get; set; }
-        [DataMember] public bool HttpOnly { get; set; }
-    }
-
-    [DataContract]
-    internal sealed class SteamCookieSnapshot
-    {
-        [DataMember] public DateTime CapturedAtUtc { get; set; }
+        [DataMember] public DateTime LastValidatedUtc { get; set; }
         [DataMember] public string SelfSteamId64 { get; set; }
-        [DataMember] public List<StoredCookie> Cookies { get; set; } = new List<StoredCookie>();
     }
 
-    internal sealed class SteamCookieStore
+    internal sealed class SteamSessionStore
     {
         private readonly string _filePath;
 
-        public SteamCookieStore(string pluginUserDataPath)
+        public SteamSessionStore(string pluginUserDataPath)
         {
             if (string.IsNullOrWhiteSpace(pluginUserDataPath))
                 throw new ArgumentNullException(nameof(pluginUserDataPath));
 
             Directory.CreateDirectory(pluginUserDataPath);
-            _filePath = Path.Combine(pluginUserDataPath, "steam_cookies.bin");
+            _filePath = Path.Combine(pluginUserDataPath, "steam_session.json");
         }
 
-        public bool TryLoad(out SteamCookieSnapshot snapshot)
+        public bool TryLoad(out SteamSessionData session)
         {
-            snapshot = null;
+            session = null;
             if (!File.Exists(_filePath))
                 return false;
 
             try
             {
-                var protectedBytes = File.ReadAllBytes(_filePath);
-                var jsonBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
-
-                var ser = new DataContractJsonSerializer(typeof(SteamCookieSnapshot));
-                using (var ms = new MemoryStream(jsonBytes))
-                {
-                    snapshot = ser.ReadObject(ms) as SteamCookieSnapshot;
-                }
-
-                return snapshot?.Cookies?.Count > 0;
+                var json = File.ReadAllText(_filePath, Encoding.UTF8);
+                session = Serialization.FromJson<SteamSessionData>(json);
+                return session != null && !string.IsNullOrWhiteSpace(session.SelfSteamId64);
             }
             catch
             {
-                snapshot = null;
+                session = null;
                 return false;
             }
         }
 
-        public void Save(SteamCookieSnapshot snapshot)
+        public void Save(SteamSessionData session)
         {
-            if (snapshot?.Cookies == null || snapshot.Cookies.Count == 0)
+            if (session == null || string.IsNullOrWhiteSpace(session.SelfSteamId64))
                 return;
 
-            var ser = new DataContractJsonSerializer(typeof(SteamCookieSnapshot));
-            byte[] jsonBytes;
-            using (var ms = new MemoryStream())
+            try
             {
-                ser.WriteObject(ms, snapshot);
-                jsonBytes = ms.ToArray();
+                var json = Serialization.ToJson(session);
+                var tmp = _filePath + ".tmp";
+                File.WriteAllText(tmp, json, Encoding.UTF8);
+                
+                if (File.Exists(_filePath))
+                    File.Delete(_filePath);
+                File.Move(tmp, _filePath);
             }
-
-            var protectedBytes = ProtectedData.Protect(jsonBytes, null, DataProtectionScope.CurrentUser);
-
-            var tmp = _filePath + ".tmp";
-            File.WriteAllBytes(tmp, protectedBytes);
-
-            try { if (File.Exists(_filePath)) File.Delete(_filePath); } catch { /* ignore */ }
-            File.Move(tmp, _filePath);
+            catch (Exception ex)
+            {
+                // Log but don't crash
+                System.Diagnostics.Debug.WriteLine($"Failed to save Steam session: {ex.Message}");
+            }
         }
 
         public void Clear()
         {
-            try { if (File.Exists(_filePath)) File.Delete(_filePath); } catch { /* ignore */ }
+            try
+            {
+                if (File.Exists(_filePath))
+                    File.Delete(_filePath);
+            }
+            catch
+            {
+                /* ignore */
+            }
         }
     }
 
@@ -148,8 +136,9 @@ namespace FriendsAchievementFeed.Services
         private const int MaxAttempts = 3;
         private const int PlayerSummariesBatchSize = 100; // Steam API limit per call :contentReference[oaicite:2]{index=2}
 
-        private static readonly TimeSpan CookieReloadInterval = TimeSpan.FromMinutes(20);
-        private static readonly TimeSpan SelfIdRefreshInterval = TimeSpan.FromMinutes(30);
+        // Session validation intervals
+        private static readonly TimeSpan SessionCheckInterval = TimeSpan.FromMinutes(30);
+        private static readonly TimeSpan CookieRefreshInterval = TimeSpan.FromHours(6);
 
         private static readonly TimeZoneInfo SteamBaseTimeZone =
             TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
@@ -165,7 +154,7 @@ namespace FriendsAchievementFeed.Services
 
         private readonly IPlayniteAPI _api;
         private readonly ILogger _logger;
-        private readonly SteamCookieStore _cookieStore;
+        private readonly SteamSessionStore _sessionStore;
 
         private readonly CookieContainer _cookieJar = new CookieContainer();
         private readonly object _cookieLock = new object();
@@ -176,12 +165,9 @@ namespace FriendsAchievementFeed.Services
         private HttpClient _apiHttp;
         private HttpClientHandler _apiHandler;
 
-        private DateTime _cookiesLoadedAtUtc = DateTime.MinValue;
-
         private string _selfSteamId64;
-        private DateTime _selfIdLoadedAtUtc = DateTime.MinValue;
-
-        private readonly bool _debugCookieSummary = false;
+        private DateTime _lastSessionCheckUtc = DateTime.MinValue;
+        private DateTime _lastCookieRefreshUtc = DateTime.MinValue;
 
         public SteamClient(IPlayniteAPI api, ILogger logger, string pluginUserDataPath)
         {
@@ -191,10 +177,13 @@ namespace FriendsAchievementFeed.Services
             if (string.IsNullOrWhiteSpace(pluginUserDataPath))
                 throw new ArgumentNullException(nameof(pluginUserDataPath));
 
-            _cookieStore = new SteamCookieStore(pluginUserDataPath);
+            _sessionStore = new SteamSessionStore(pluginUserDataPath);
 
             BuildHttpClientsOnce();
-            TryLoadSavedCookiesIntoJar(force: true);
+            LoadSessionData();
+            
+            // Load cookies from CEF on startup for immediate use
+            LoadCookiesFromCefIntoJar();
         }
 
         public void Dispose()
@@ -206,13 +195,123 @@ namespace FriendsAchievementFeed.Services
         }
 
         // ---------------------------------------------------------------------
-        // Cookies
+        // Session Management (using CEF's persistent cookie system)
         // ---------------------------------------------------------------------
 
-        public Task<bool> ReloadCookiesFromDiskAsync(CancellationToken ct) => EnsureCookiesAsync(ct, force: true);
+        private void LoadSessionData()
+        {
+            if (_sessionStore.TryLoad(out var session))
+            {
+                _selfSteamId64 = session.SelfSteamId64;
+                _lastSessionCheckUtc = session.LastValidatedUtc;
+            }
+        }
+
+        private void SaveSessionData()
+        {
+            if (string.IsNullOrWhiteSpace(_selfSteamId64))
+                return;
+
+            _sessionStore.Save(new SteamSessionData
+            {
+                SelfSteamId64 = _selfSteamId64,
+                LastValidatedUtc = DateTime.UtcNow
+            });
+        }
 
         /// <summary>
-        /// User-initiated: opens a WebView dialog, user logs in (Steam Guard), then we store cookies encrypted.
+        /// Check if logged in by validating session cookies exist in CEF's cookie store
+        /// </summary>
+        private bool HasSteamSessionCookies()
+        {
+            try
+            {
+                using (var view = _api.WebViews.CreateOffscreenView())
+                {
+                    var cookies = view.GetCookies();
+                    if (cookies == null) return false;
+
+                    return cookies.Any(c =>
+                        c != null &&
+                        !string.IsNullOrWhiteSpace(c.Domain) &&
+                        IsSteamDomain(c.Domain) &&
+                        SteamSessionCookieNames.Any(n => string.Equals(c.Name, n, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "[FAF] Failed to check Steam session cookies.");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Headless refresh: load a Steam page in an offscreen WebView so session cookies are automatically
+        /// updated by the website and persisted by CEF. No manual cookie handling needed.
+        /// </summary>
+        public async Task<bool> RefreshCookiesHeadlessAsync(CancellationToken ct)
+        {
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+
+                bool success = false;
+                string extractedId = null;
+
+                await _api.MainView.UIDispatcher.InvokeAsync(async () =>
+                {
+                    try
+                    {
+                        // Use standard CreateOffscreenView() - available in Playnite 9+
+                        using (var view = _api.WebViews.CreateOffscreenView())
+                        {
+                            // Navigate to Steam page - this will use existing cookies and refresh them
+                            view.Navigate("https://store.steampowered.com/explore/");
+                            await Task.Delay(2000, ct); // Give time for page load and cookie refresh
+
+                            // Extract Steam ID from current cookies
+                            var cookies = view.GetCookies();
+                            if (cookies != null)
+                            {
+                                var steamLogin = cookies.FirstOrDefault(c =>
+                                    c != null &&
+                                    string.Equals(c.Name, "steamLoginSecure", StringComparison.OrdinalIgnoreCase));
+
+                                if (steamLogin != null)
+                                {
+                                    extractedId = TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
+                                    success = true;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Debug(ex, "[FAF] CreateOffscreenView failed - may not be available in this Playnite version.");
+                    }
+                });
+
+                if (success && !string.IsNullOrWhiteSpace(extractedId))
+                {
+                    _selfSteamId64 = extractedId;
+                    _lastCookieRefreshUtc = DateTime.UtcNow;
+                    _lastSessionCheckUtc = DateTime.UtcNow;
+                    SaveSessionData();
+                }
+
+                return success;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "[FAF] Headless cookie refresh failed.");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// User-initiated: opens a WebView dialog, user logs in (Steam Guard), cookies are automatically
+        /// persisted by CEF.
         /// </summary>
         public async Task<(bool Success, string Message)> AuthenticateInteractiveAsync(CancellationToken ct)
         {
@@ -220,29 +319,58 @@ namespace FriendsAchievementFeed.Services
             {
                 ct.ThrowIfCancellationRequested();
 
-                var snap = await CaptureCookiesFromInteractiveLoginAsync(ct).ConfigureAwait(false);
-                if (snap?.Cookies == null || snap.Cookies.Count == 0)
-                    return (false, "No cookies captured. Login may have been cancelled.");
+                bool loggedIn = false;
+                string extractedId = null;
 
-                if (!SnapshotHasSessionCookie(snap))
+                await _api.MainView.UIDispatcher.InvokeAsync(async () =>
+                {
+                    using (var view = _api.WebViews.CreateView(1000, 800))
+                    {
+                        // Clear old Steam cookies
+                        view.DeleteDomainCookies(".steamcommunity.com");
+                        view.DeleteDomainCookies("steamcommunity.com");
+                        view.DeleteDomainCookies(".steampowered.com");
+                        view.DeleteDomainCookies("steampowered.com");
+
+                        view.Navigate("https://steamcommunity.com/login/home/?goto=" +
+                                      Uri.EscapeDataString("https://steamcommunity.com/my/"));
+
+                        view.OpenDialog();
+
+                        // Give page time to settle
+                        await Task.Delay(500);
+
+                        // Check if we got session cookies
+                        var cookies = view.GetCookies();
+                        if (cookies != null)
+                        {
+                            var steamCookies = cookies
+                                .Where(c => c != null && !string.IsNullOrWhiteSpace(c.Domain))
+                                .Where(c => IsSteamDomain(c.Domain))
+                                .ToList();
+
+                            if (steamCookies.Count > 0)
+                            {
+                                var steamLogin = steamCookies.FirstOrDefault(c =>
+                                    string.Equals(c.Name, "steamLoginSecure", StringComparison.OrdinalIgnoreCase));
+
+                                if (steamLogin != null)
+                                {
+                                    extractedId = TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
+                                    loggedIn = !string.IsNullOrWhiteSpace(extractedId);
+                                }
+                            }
+                        }
+                    }
+                });
+
+                if (!loggedIn)
                     return (false, "Steam session cookies not found. Please ensure login completed.");
 
-                _cookieStore.Save(snap);
-
-                lock (_cookieLock)
-                {
-                    ApplySnapshotToCookieJar_NoThrow(snap);
-                }
-
-                _cookiesLoadedAtUtc = DateTime.UtcNow;
-                if (!string.IsNullOrWhiteSpace(snap.SelfSteamId64))
-                {
-                    _selfSteamId64 = snap.SelfSteamId64;
-                    _selfIdLoadedAtUtc = DateTime.UtcNow;
-                }
-
-                if (_debugCookieSummary)
-                    LogSteamCookieSummary("after interactive auth");
+                _selfSteamId64 = extractedId;
+                _lastCookieRefreshUtc = DateTime.UtcNow;
+                _lastSessionCheckUtc = DateTime.UtcNow;
+                SaveSessionData();
 
                 return (true, "Steam authentication saved.");
             }
@@ -256,260 +384,206 @@ namespace FriendsAchievementFeed.Services
 
         public void ClearSavedCookies()
         {
-            _cookieStore.Clear();
-            BuildHttpClientsOnce();
+            // Clear cookies from CEF
+            try
+            {
+                using (var view = _api.WebViews.CreateOffscreenView())
+                {
+                    view.DeleteDomainCookies(".steamcommunity.com");
+                    view.DeleteDomainCookies("steamcommunity.com");
+                    view.DeleteDomainCookies(".steampowered.com");
+                    view.DeleteDomainCookies("steampowered.com");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "[FAF] Failed to clear Steam cookies from CEF.");
+            }
 
+            _sessionStore.Clear();
             _selfSteamId64 = null;
-            _selfIdLoadedAtUtc = DateTime.MinValue;
-            _cookiesLoadedAtUtc = DateTime.MinValue;
+            _lastSessionCheckUtc = DateTime.MinValue;
+            _lastCookieRefreshUtc = DateTime.MinValue;
+
+            BuildHttpClientsOnce();
         }
 
         public async Task<string> GetSelfSteamId64Async(CancellationToken ct)
         {
+            // Return cached if recent
             if (!string.IsNullOrWhiteSpace(_selfSteamId64) &&
-                (DateTime.UtcNow - _selfIdLoadedAtUtc) < SelfIdRefreshInterval)
+                (DateTime.UtcNow - _lastSessionCheckUtc) < SessionCheckInterval)
             {
                 return _selfSteamId64;
             }
 
-            await EnsureCookiesAsync(ct, force: false).ConfigureAwait(false);
-
-            if (!string.IsNullOrWhiteSpace(_selfSteamId64))
+            // Try to refresh from cookies
+            if (!HasSteamSessionCookies())
             {
-                _selfIdLoadedAtUtc = DateTime.UtcNow;
-                return _selfSteamId64;
+                _selfSteamId64 = null;
+                return null;
             }
 
-            await EnsureCookiesAsync(ct, force: true).ConfigureAwait(false);
-            _selfIdLoadedAtUtc = DateTime.UtcNow;
+            // Extract Steam ID from CEF cookies
+            try
+            {
+                using (var view = _api.WebViews.CreateOffscreenView())
+                {
+                    var cookies = view.GetCookies();
+                    if (cookies != null)
+                    {
+                        var steamLogin = cookies.FirstOrDefault(c =>
+                            c != null &&
+                            string.Equals(c.Name, "steamLoginSecure", StringComparison.OrdinalIgnoreCase));
+
+                        if (steamLogin != null)
+                        {
+                            var id = TryExtractSteamId64FromSteamLoginSecure(steamLogin.Value);
+                            if (!string.IsNullOrWhiteSpace(id))
+                            {
+                                _selfSteamId64 = id;
+                                _lastSessionCheckUtc = DateTime.UtcNow;
+                                SaveSessionData();
+                                return id;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "[FAF] Failed to extract Steam ID from cookies.");
+            }
+
+            // Try refreshing headlessly if we don't have ID
+            if (string.IsNullOrWhiteSpace(_selfSteamId64))
+            {
+                await RefreshCookiesHeadlessAsync(ct).ConfigureAwait(false);
+            }
+
             return _selfSteamId64;
         }
 
-        private async Task<bool> EnsureCookiesAsync(CancellationToken ct, bool force)
+        /// <summary>
+        /// Ensures session is valid, refreshing if needed and loading cookies into HttpClient
+        /// </summary>
+        private async Task<bool> EnsureSessionAsync(CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
 
-            var missingSession = !CookieJarHasSessionCookies();
-            if (!force && !missingSession && (DateTime.UtcNow - _cookiesLoadedAtUtc) < CookieReloadInterval)
-                return true;
+            // Check if we need to refresh
+            var timeSinceRefresh = DateTime.UtcNow - _lastCookieRefreshUtc;
+            var needsRefresh = timeSinceRefresh >= CookieRefreshInterval;
 
-            var ok = TryLoadSavedCookiesIntoJar(force);
-            _cookiesLoadedAtUtc = DateTime.UtcNow;
-
-            if (_debugCookieSummary)
-                LogSteamCookieSummary(force ? "after forced disk reload" : "after disk reload");
-
-            if (string.IsNullOrWhiteSpace(_selfSteamId64))
+            if (!needsRefresh)
             {
-                _selfSteamId64 = TryExtractSelfSteamIdFromJar();
-                if (!string.IsNullOrWhiteSpace(_selfSteamId64))
-                    _selfIdLoadedAtUtc = DateTime.UtcNow;
-            }
-
-            return ok;
-        }
-
-        private bool TryLoadSavedCookiesIntoJar(bool force)
-        {
-            if (!force && CookieJarHasSessionCookies())
-                return true;
-
-            if (!_cookieStore.TryLoad(out var snap) || snap == null)
-                return CookieJarHasSessionCookies();
-
-            if (!string.IsNullOrWhiteSpace(snap.SelfSteamId64))
-                _selfSteamId64 = snap.SelfSteamId64;
-
-            lock (_cookieLock)
-            {
-                ApplySnapshotToCookieJar_NoThrow(snap);
-            }
-
-            return CookieJarHasSessionCookies();
-        }
-
-        private static bool SnapshotHasSessionCookie(SteamCookieSnapshot snap)
-        {
-            if (snap?.Cookies == null) return false;
-
-            foreach (var c in snap.Cookies)
-            {
-                if (c == null) continue;
-                foreach (var name in SteamSessionCookieNames)
+                // Cookies are recent, just ensure they're loaded in HttpClient
+                lock (_cookieLock)
                 {
-                    if (string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
+                    if (HasCookiesInJar())
                         return true;
                 }
             }
 
-            return false;
-        }
-
-        private void ApplySnapshotToCookieJar_NoThrow(SteamCookieSnapshot snap)
-        {
-            if (snap?.Cookies == null) return;
-
-            foreach (var sc in snap.Cookies)
+            // Need to refresh: use WebView to get fresh cookies from CEF
+            _logger?.Debug($"[FAF] Refreshing Steam session (time since last refresh: {timeSinceRefresh})");
+            var refreshed = await RefreshCookiesHeadlessAsync(ct).ConfigureAwait(false);
+            
+            if (refreshed)
             {
-                if (sc == null) continue;
-
-                var name = sc.Name ?? "";
-                var domain = (sc.Domain ?? "").Trim();
-                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(domain))
-                    continue;
-
-                if (!IsSteamDomain(domain))
-                    continue;
-
-                if (sc.ExpiresUtc.HasValue && sc.ExpiresUtc.Value <= DateTime.UtcNow.AddMinutes(-1))
-                    continue;
-
-                try
-                {
-                    var path = string.IsNullOrWhiteSpace(sc.Path) ? "/" : sc.Path;
-                    var sysCookie = new Cookie(name, sc.Value ?? "", path)
-                    {
-                        Domain = domain,
-                        Secure = sc.Secure,
-                        HttpOnly = sc.HttpOnly
-                    };
-
-                    if (sc.ExpiresUtc.HasValue)
-                        sysCookie.Expires = sc.ExpiresUtc.Value;
-
-                    _cookieJar.Add(GetAddUriForDomain(domain), sysCookie);
-                }
-                catch
-                {
-                    // ignore individual cookie issues
-                }
+                // Load cookies from CEF into HttpClient for fast requests
+                LoadCookiesFromCefIntoJar();
             }
+            
+            return refreshed;
         }
 
-        private string TryExtractSelfSteamIdFromJar()
+        /// <summary>
+        /// Loads current CEF cookies into HttpClient's CookieContainer for fast requests.
+        /// Also ensures timezoneOffset cookie is set to Pacific Time to match Steam's default.
+        /// </summary>
+        private void LoadCookiesFromCefIntoJar()
         {
             try
             {
-                return ExtractSelfId(_cookieJar.GetCookies(CommunityBase)) ??
-                       ExtractSelfId(_cookieJar.GetCookies(StoreBase));
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static string ExtractSelfId(CookieCollection cookies)
-        {
-            if (cookies == null || cookies.Count == 0) return null;
-
-            foreach (Cookie c in cookies)
-            {
-                if (c == null) continue;
-                if (!c.Name.Equals("steamLoginSecure", StringComparison.OrdinalIgnoreCase)) continue;
-
-                var id = TryExtractSteamId64FromSteamLoginSecure(c.Value);
-                if (!string.IsNullOrWhiteSpace(id))
-                    return id;
-            }
-
-            return null;
-        }
-
-        private async Task<SteamCookieSnapshot> CaptureCookiesFromInteractiveLoginAsync(CancellationToken ct)
-        {
-            SteamCookieSnapshot snap = null;
-
-            await _api.MainView.UIDispatcher.InvokeAsync(() =>
-            {
-                using (var view = _api.WebViews.CreateView(1000, 800))
+                using (var view = _api.WebViews.CreateOffscreenView())
                 {
-                    view.Navigate("https://steamcommunity.com/login/home/?goto=" +
-                                  Uri.EscapeDataString("https://steamcommunity.com/my/"));
-
-                    view.OpenDialog();
-
                     var cookies = view.GetCookies();
-                    if (cookies == null || !cookies.Any())
-                        return;
+                    if (cookies == null) return;
 
-                    var steamCookies = cookies
-                        .Where(c => c != null)
-                        .Where(c => !string.IsNullOrWhiteSpace(c.Domain))
-                        .Where(c => IsSteamDomain(c.Domain))
-                        .Where(c => !string.Equals(c.Name, "timezoneOffset", StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-
-                    if (steamCookies.Count == 0)
-                        return;
-
-                    snap = new SteamCookieSnapshot
+                    lock (_cookieLock)
                     {
-                        CapturedAtUtc = DateTime.UtcNow,
-                        Cookies = steamCookies.Select(ToStoredCookie).ToList()
-                    };
+                        var steamCookies = cookies
+                            .Where(c => c != null && !string.IsNullOrWhiteSpace(c.Domain))
+                            .Where(c => IsSteamDomain(c.Domain))
+                            .ToList();
 
-                    var sls = snap.Cookies.FirstOrDefault(x =>
-                        x.Name != null && x.Name.Equals("steamLoginSecure", StringComparison.OrdinalIgnoreCase));
+                        foreach (var c in steamCookies)
+                        {
+                            try
+                            {
+                                var domain = c.Domain.TrimStart('.');
+                                var path = string.IsNullOrWhiteSpace(c.Path) ? "/" : c.Path;
+                                
+                                var cookie = new Cookie(c.Name, c.Value, path)
+                                {
+                                    Domain = domain,
+                                    Secure = c.Secure,
+                                    HttpOnly = c.HttpOnly
+                                };
 
-                    snap.SelfSteamId64 = TryExtractSteamId64FromSteamLoginSecure(sls?.Value);
+                                if (c.Expires.HasValue && c.Expires.Value > DateTime.MinValue)
+                                {
+                                    var expires = c.Expires.Value;
+                                    cookie.Expires = expires.Kind == DateTimeKind.Utc ? expires : expires.ToUniversalTime();
+                                }
+
+                                var uri = GetAddUriForDomain(domain);
+                                _cookieJar.Add(uri, cookie);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger?.Debug(ex, $"[FAF] Failed to add cookie {c.Name} to jar");
+                            }
+                        }
+
+                        // Force Pacific Time timezone offset (-28800 seconds = UTC-8)
+                        // This ensures Steam returns achievement times in PST/PDT consistently
+                        try
+                        {
+                            var tzCookie = new Cookie("timezoneOffset", "-28800,0", "/")
+                            {
+                                Domain = "steamcommunity.com"
+                            };
+                            _cookieJar.Add(CommunityBase, tzCookie);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.Debug(ex, "[FAF] Failed to set timezoneOffset cookie");
+                        }
+                    }
                 }
-            });
-
-            return snap;
-        }
-
-        // IMPORTANT: no dynamic here (fixes CS0656 binder error)
-        private static StoredCookie ToStoredCookie(HttpCookie c) // Playnite.SDK.HttpCookie :contentReference[oaicite:3]{index=3}
-        {
-            DateTime? expUtc = null;
-            if (c.Expires.HasValue)
-            {
-                var e = c.Expires.Value;
-                expUtc = e.Kind == DateTimeKind.Local ? e.ToUniversalTime()
-                     : e.Kind == DateTimeKind.Utc ? e
-                     : DateTime.SpecifyKind(e, DateTimeKind.Utc);
             }
-
-            return new StoredCookie
+            catch (Exception ex)
             {
-                Name = c.Name,
-                Value = c.Value,
-                Domain = c.Domain,
-                Path = string.IsNullOrWhiteSpace(c.Path) ? "/" : c.Path,
-                Secure = c.Secure,
-                HttpOnly = c.HttpOnly,
-                ExpiresUtc = expUtc
-            };
+                _logger?.Debug(ex, "[FAF] Failed to load cookies from CEF into jar");
+            }
         }
 
-        private bool CookieJarHasSessionCookies()
+        private bool HasCookiesInJar()
         {
             try
             {
-                return HasAnySessionCookie(_cookieJar.GetCookies(CommunityBase)) ||
-                       HasAnySessionCookie(_cookieJar.GetCookies(StoreBase));
+                var communityCookies = _cookieJar.GetCookies(CommunityBase);
+                var storeCookies = _cookieJar.GetCookies(StoreBase);
+
+                return (communityCookies != null && communityCookies.Count > 0) ||
+                       (storeCookies != null && storeCookies.Count > 0);
             }
             catch
             {
                 return false;
             }
-        }
-
-        private static bool HasAnySessionCookie(CookieCollection cookies)
-        {
-            if (cookies == null || cookies.Count == 0) return false;
-
-            foreach (Cookie c in cookies)
-            {
-                if (c == null) continue;
-                foreach (var name in SteamSessionCookieNames)
-                {
-                    if (string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-            }
-            return false;
         }
 
         private static bool IsSteamDomain(string domain)
@@ -536,7 +610,11 @@ namespace FriendsAchievementFeed.Services
 
             string decoded;
             try { decoded = Uri.UnescapeDataString(value); }
-            catch { decoded = value; }
+            catch (Exception)
+            {
+                // Malformed cookie value; use as-is
+                decoded = value;
+            }
 
             var m = Regex.Match(decoded, @"(?<id>\d{17})");
             return m.Success ? m.Groups["id"].Value : null;
@@ -1019,7 +1097,11 @@ namespace FriendsAchievementFeed.Services
                         var serializer = new DataContractJsonSerializer(typeof(SchemaRoot));
                         SchemaRoot root;
                         try { root = serializer.ReadObject(stream) as SchemaRoot; }
-                        catch { return false; }
+                        catch (Exception)
+                        {
+                            // Failed to deserialize schema response
+                            return false;
+                        }
 
                         var ach = root?.Response?.Game?.AvailableGameStats?.Achievements;
                         return (ach != null && ach.Length > 0);
@@ -1059,11 +1141,19 @@ namespace FriendsAchievementFeed.Services
 
             Uri uri;
             try { uri = new Uri(url); }
-            catch { return result; }
+            catch (Exception)
+            {
+                // Invalid URL format
+                return result;
+            }
 
+            // If cookies required, ensure session is valid (loads cookies into HttpClient)
             if (requiresCookies && IsSteamCookieHost(uri))
-                await EnsureCookiesAsync(ct, force: false).ConfigureAwait(false);
+            {
+                await EnsureSessionAsync(ct).ConfigureAwait(false);
+            }
 
+            // Use fast HttpClient for all requests (cookies already loaded)
             for (int attempt = 1; attempt <= MaxAttempts; attempt++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -1156,6 +1246,7 @@ namespace FriendsAchievementFeed.Services
             _apiHandler?.Dispose();
             _apiHttp?.Dispose();
 
+            // Use CookieContainer loaded from CEF for fast authenticated requests
             _cookieJar.PerDomainCapacity = 300;
 
             _handler = new HttpClientHandler
@@ -1176,22 +1267,6 @@ namespace FriendsAchievementFeed.Services
             };
 
             _apiHttp = new HttpClient(_apiHandler) { Timeout = TimeSpan.FromSeconds(30) };
-
-            if (_debugCookieSummary)
-                LogSteamCookieSummary("initial");
-        }
-
-        private void LogSteamCookieSummary(string when)
-        {
-            string Summ(CookieCollection cc)
-            {
-                if (cc == null) return "<null>";
-                var names = cc.Cast<Cookie>().Select(c => c.Name).Distinct().OrderBy(x => x).ToList();
-                return $"{cc.Count} [{string.Join(", ", names)}]";
-            }
-
-            _logger.Info($"[SteamHtml] Cookies ({when}) steamcommunity: {Summ(_cookieJar.GetCookies(CommunityBase))}");
-            _logger.Info($"[SteamHtml] Cookies ({when}) steampowered(store): {Summ(_cookieJar.GetCookies(StoreBase))}");
         }
 
         // ---------------------------------------------------------------------
@@ -1305,7 +1380,11 @@ namespace FriendsAchievementFeed.Services
         private static DateTime GetSteamNow()
         {
             try { return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, SteamBaseTimeZone); }
-            catch { return DateTime.Now; }
+            catch (Exception)
+            {
+                // Timezone conversion failed; fallback to local time
+                return DateTime.Now;
+            }
         }
     }
 }

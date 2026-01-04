@@ -45,9 +45,7 @@ namespace FriendsAchievementFeed.Services
         }
 
         public Task<bool> RefreshCookiesAsync(CancellationToken cancel)
-        {
-            return _steam.ReloadCookiesFromDiskAsync(cancel);
-        }
+            => _steam.RefreshCookiesHeadlessAsync(cancel);
 
         private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct)
         {
@@ -133,7 +131,7 @@ namespace FriendsAchievementFeed.Services
 
                 if (SteamClient.LooksLoggedOutHeader(html))
                 {
-                    await _steam.ReloadCookiesFromDiskAsync(CancellationToken.None).ConfigureAwait(false);
+                    await _steam.RefreshCookiesHeadlessAsync(CancellationToken.None).ConfigureAwait(false);
 
                     var page2 = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
                     html = page2?.Html ?? string.Empty;
@@ -269,7 +267,7 @@ namespace FriendsAchievementFeed.Services
 
             if (LooksLoggedOutHeuristic(html1, res.FinalUrl))
             {
-                await _steam.ReloadCookiesFromDiskAsync(cancel).ConfigureAwait(false);
+                await _steam.RefreshCookiesHeadlessAsync(cancel).ConfigureAwait(false);
 
                 var (page2, html2) = await FetchAsync().ConfigureAwait(false);
                 res.StatusCode = page2 != null ? (int)page2.StatusCode : 0;
@@ -321,7 +319,11 @@ namespace FriendsAchievementFeed.Services
                 has = await _steam.GetAppHasAchievementsAsync(apiKey, appId, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
-            catch { return; }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, $"[FAF] Failed to check if app {appId} has achievements via API.");
+                return;
+            }
 
             if (has == false)
                 res.Detail = "no_achievements";

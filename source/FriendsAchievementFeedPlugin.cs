@@ -200,7 +200,10 @@ namespace FriendsAchievementFeed
 
                 PlayniteApi?.Database?.Games?.ItemCollectionChanged -= Games_ItemCollectionChanged;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "[FAF] Error during application shutdown cleanup.");
+            }
 
             _backgroundUpdates.Stop();
         }

@@ -13,7 +13,7 @@ using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Views
 {
-    public partial class SettingsControl : UserControl
+    public partial class SettingsControl : UserControl, IDisposable
     {
         // -----------------------------
         // Option A (safe): UserControl DependencyProperties for auth UI
@@ -133,7 +133,7 @@ namespace FriendsAchievementFeed.Views
 
             try
             {
-                await _steam.ReloadCookiesFromDiskAsync(CancellationToken.None).ConfigureAwait(true);
+                await _steam.RefreshCookiesHeadlessAsync(CancellationToken.None).ConfigureAwait(true);
 
                 var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
                 if (string.IsNullOrWhiteSpace(self))
@@ -374,5 +374,20 @@ namespace FriendsAchievementFeed.Views
             _plugin.Settings.EndEdit();
         }
 
+        // -----------------------------
+        // IDisposable implementation
+        // -----------------------------
+
+        public void Dispose()
+        {
+            try
+            {
+                _steam?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _logger?.Error(ex, "[FAF] Error disposing SteamClient in SettingsControl.");
+            }
+        }
     }
 }

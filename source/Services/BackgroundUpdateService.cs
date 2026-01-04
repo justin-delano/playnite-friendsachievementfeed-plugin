@@ -14,6 +14,7 @@ namespace FriendsAchievementFeed.Services
         private readonly NotificationPublisher _notifications;
         private readonly Action _onUpdateCompleted;
 
+        private readonly object _ctsLock = new object();
         private CancellationTokenSource _cts;
 
         public BackgroundUpdateService(
@@ -32,12 +33,16 @@ namespace FriendsAchievementFeed.Services
 
         public void Start()
         {
-            if (_cts != null)
+            lock (_ctsLock)
             {
-                return;
+                if (_cts != null)
+                {
+                    return;
+                }
+
+                _cts = new CancellationTokenSource();
             }
 
-            _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
             var interval = TimeSpan.FromHours(Math.Max(1, _settings.PeriodicUpdateHours));
@@ -61,19 +66,32 @@ namespace FriendsAchievementFeed.Services
 
         public void Stop()
         {
+            CancellationTokenSource ctsToDispose = null;
+
+            lock (_ctsLock)
+            {
+                if (_cts == null)
+                {
+                    return;
+                }
+
+                ctsToDispose = _cts;
+                _cts = null;
+            }
+
             try
             {
-                _cts?.Cancel();
+                ctsToDispose?.Cancel();
                 _feedService?.CancelActiveRebuild();
             }
-            catch
+            catch (Exception ex)
             {
-                // ignore shutdown errors
+                // Log but ignore shutdown errors to ensure cleanup completes
+                _logger?.Debug(ex, "[PeriodicUpdate] Error during background update service shutdown.");
             }
             finally
             {
-                _cts?.Dispose();
-                _cts = null;
+                ctsToDispose?.Dispose();
             }
         }
 

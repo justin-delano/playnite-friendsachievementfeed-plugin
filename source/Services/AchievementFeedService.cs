@@ -375,7 +375,8 @@ namespace FriendsAchievementFeed.Services
             if (game == null || !_steam.TryGetSteamAppId(game, out var appId))
                 return Task.FromResult(new List<FeedEntry>());
 
-            var raw = GetAllCachedFriendEntries()
+            var allEntries = GetAllCachedFriendEntries();
+            var raw = allEntries
                 .Where(e => e != null && e.AppId == appId && e.PlayniteGameId == game.Id)
                 .OrderByDescending(e => e.FriendUnlockTimeUtc)
                 .Take(_settings.MaxFeedItems)
@@ -386,7 +387,8 @@ namespace FriendsAchievementFeed.Services
 
         public Task<List<FeedEntry>> BuildGlobalFeedAsync(CancellationToken cancel)
         {
-            var raw = GetAllCachedFriendEntries()
+            var allEntries = GetAllCachedFriendEntries();
+            var raw = allEntries
                 .OrderByDescending(e => e.FriendUnlockTimeUtc)
                 .Take(_settings.MaxFeedItems)
                 .ToList();
