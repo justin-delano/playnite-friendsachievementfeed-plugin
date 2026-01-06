@@ -6,7 +6,7 @@ using Playnite.SDK.Models;
 
 namespace FriendsAchievementFeed.Services
 {
-    internal static class SteamLibraryHelper
+    internal static class SteamLibraryProvider
     {
         private static readonly Guid SteamPluginId = Guid.Parse("CB91DFC9-B977-43BF-8E70-55F46E410FAB");
 

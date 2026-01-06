@@ -8,10 +8,10 @@ namespace FriendsAchievementFeed.Services
 {
     internal sealed class FeedEntryHydrator
     {
-        private readonly ICacheService _cache;
+        private readonly ICacheManager _cache;
         private readonly FeedEntryFactory _factory;
 
-        public FeedEntryHydrator(ICacheService cache, FeedEntryFactory factory)
+        public FeedEntryHydrator(ICacheManager cache, FeedEntryFactory factory)
         {
             _cache = cache;
             _factory = factory;

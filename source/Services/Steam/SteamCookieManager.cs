@@ -79,11 +79,18 @@ namespace FriendsAchievementFeed.Services
         public static Uri GetAddUriForDomain(string cookieDomain)
         {
             var d = (cookieDomain ?? "").Trim().TrimStart('.');
-            if (d.EndsWith("steamcommunity.com", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(d))
                 return CommunityBase;
-            if (d.EndsWith("steampowered.com", StringComparison.OrdinalIgnoreCase))
-                return StoreBase;
-            return new Uri("https://" + d);
+
+            // Use the cookie's domain directly so the host matches when adding to CookieContainer
+            try
+            {
+                return new Uri("https://" + d);
+            }
+            catch
+            {
+                return CommunityBase;
+            }
         }
 
         /// <summary>
@@ -114,10 +121,10 @@ namespace FriendsAchievementFeed.Services
                         {
                             var domain = c.Domain.TrimStart('.');
                             var path = string.IsNullOrWhiteSpace(c.Path) ? "/" : c.Path;
-
-                            var cookie = new Cookie(c.Name, c.Value, path)
+                            var uri = GetAddUriForDomain(domain);
+                            var cookie = new Cookie(c.Name, SanitizeCookieValue(c.Value), path)
                             {
-                                Domain = domain,
+                                Domain = uri.Host,
                                 Secure = c.Secure,
                                 HttpOnly = c.HttpOnly
                             };
@@ -127,8 +134,6 @@ namespace FriendsAchievementFeed.Services
                                 var expires = c.Expires.Value;
                                 cookie.Expires = expires.Kind == DateTimeKind.Utc ? expires : expires.ToUniversalTime();
                             }
-
-                            var uri = GetAddUriForDomain(domain);
                             cookieJar.Add(uri, cookie);
                         }
                         catch (Exception ex)
@@ -154,9 +159,12 @@ namespace FriendsAchievementFeed.Services
         {
             try
             {
-                var tzCookie = new Cookie("timezoneOffset", SteamTimeParser.GetSteamTimezoneOffsetCookieValue(), "/")
+                var tzCookie = new Cookie(
+                    "timezoneOffset",
+                    SanitizeCookieValue(SteamTimeParser.GetSteamTimezoneOffsetCookieValue()),
+                    "/")
                 {
-                    Domain = "steamcommunity.com"
+                    Domain = CommunityBase.Host
                 };
                 cookieJar.Add(CommunityBase, tzCookie);
             }
@@ -164,6 +172,15 @@ namespace FriendsAchievementFeed.Services
             {
                 logger?.Debug(ex, "[FAF] Failed to set timezoneOffset cookie");
             }
+        }
+
+        private static string SanitizeCookieValue(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            // Commas are not allowed in Cookie values for CookieContainer; encode them so Steam still accepts the offset.
+            return value.Replace(",", "%2C");
         }
 
         /// <summary>

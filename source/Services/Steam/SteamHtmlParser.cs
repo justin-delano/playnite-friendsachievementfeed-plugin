@@ -6,6 +6,7 @@ using System.Net;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using Playnite.SDK;
+using FriendsAchievementFeed.Services.Steam.Models;
 
 namespace FriendsAchievementFeed.Services.Steam
 {

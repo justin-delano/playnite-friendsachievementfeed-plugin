@@ -11,6 +11,7 @@ using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Views.Helpers;
 using Common;
 using Playnite.SDK;
+using StringResources = FriendsAchievementFeed.Services.StringResources;
 
 namespace FriendsAchievementFeed.Views
 {
@@ -59,9 +60,22 @@ namespace FriendsAchievementFeed.Views
             set => SetValue(FriendsProperty, value);
         }
 
+        public static readonly DependencyProperty FriendsStatusTextProperty =
+            DependencyProperty.Register(
+                nameof(FriendsStatusText),
+                typeof(string),
+                typeof(SettingsControl),
+                new PropertyMetadata(""));
+
+        public string FriendsStatusText
+        {
+            get => (string)GetValue(FriendsStatusTextProperty);
+            set => SetValue(FriendsStatusTextProperty, value);
+        }
+
         private readonly FriendsAchievementFeedPlugin _plugin;
         private readonly SteamClient _steam;
-        private readonly SteamAuthUiHelper _steamAuthHelper;
+        private readonly SteamAuthenticator _steamAuthHelper;
         private List<SteamFriend> _friends = new List<SteamFriend>();
         private readonly ILogger _logger;
 
@@ -76,7 +90,7 @@ namespace FriendsAchievementFeed.Views
             DataContext = _plugin.Settings;
 
             _steam = new SteamClient(_plugin.PlayniteApi, _logger, _plugin.GetPluginUserDataPath());
-            _steamAuthHelper = new SteamAuthUiHelper(_steam, _logger);
+            _steamAuthHelper = new SteamAuthenticator(_steam, _logger);
 
             Loaded += async (s, e) =>
             {
@@ -135,7 +149,7 @@ namespace FriendsAchievementFeed.Views
         }
 
         private static string Loc(string key, string fallback = null) =>
-            ResourceProvider.GetString(key) ?? fallback ?? key;
+            StringResources.GetString(key) ?? fallback ?? key;
 
         // -----------------------------
         // Cache actions
@@ -172,12 +186,12 @@ namespace FriendsAchievementFeed.Views
         {
             try
             {
-                FriendsStatusText.Text = Loc("LOCFriendsAchFeed_Progress_LoadingFriends", "Loading friends…");
+                FriendsStatusText = Loc("LOCFriendsAchFeed_Progress_LoadingFriends", "Loading friends…");
 
                 var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
                 if (string.IsNullOrWhiteSpace(self))
                 {
-                    FriendsStatusText.Text = Loc("LOCFriendsAchFeed_Info_AuthenticateWithSteam", "Authenticate with Steam (General tab) to load friends.");
+                    FriendsStatusText = Loc("LOCFriendsAchFeed_Info_AuthenticateWithSteam", "Authenticate with Steam (General tab) to load friends.");
                     return;
                 }
 
@@ -193,14 +207,14 @@ namespace FriendsAchievementFeed.Views
                 Dispatcher.Invoke(() =>
                 {
                     Friends = _friends;
-                    FriendsStatusText.Text = _friends.Count > 0
+                    FriendsStatusText = _friends.Count > 0
                         ? string.Format(Loc("LOCFriendsAchFeed_Info_LoadedFriends", "Loaded {0} friends."), _friends.Count)
                         : Loc("LOCFriendsAchFeed_Info_NoFriends", "No friends found or profile private.");
                 });
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() => FriendsStatusText.Text = string.Format(Loc("LOCFriendsAchFeed_Error_FailedLoadFriends", "Failed to load friends: {0}"), ex.Message));
+                Dispatcher.Invoke(() => FriendsStatusText = string.Format(Loc("LOCFriendsAchFeed_Error_FailedLoadFriends", "Failed to load friends: {0}"), ex.Message));
             }
         }
 
@@ -257,7 +271,7 @@ namespace FriendsAchievementFeed.Views
         {
             try
             {
-                var opts = new CacheRebuildOptions();
+                var opts = new FriendsAchievementFeed.Models.CacheRebuildOptions();
                 opts.FamilySharingFriendIDs = _plugin.Settings.GetConfiguredFriendIds().ToList();
                 opts.LimitToFamilySharingFriends = true;
 

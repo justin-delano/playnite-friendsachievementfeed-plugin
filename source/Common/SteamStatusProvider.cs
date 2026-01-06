@@ -1,6 +1,6 @@
 namespace Common
 {
-    public static class SteamStatusHelper
+    public static class SteamStatusProvider
     {
         public static string NotAuthenticated() => "Steam: Not authenticated (no saved session). Click Authenticate.";
         public static string SessionFound(string steamId) => $"Steam: Session found (SteamID {steamId}).";

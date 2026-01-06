@@ -4,7 +4,7 @@ using FriendsAchievementFeed.Models;
 
 namespace FriendsAchievementFeed.Services
 {
-    public interface ICacheService
+    public interface ICacheManager
     {
         event EventHandler CacheChanged;
 

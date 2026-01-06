@@ -24,10 +24,10 @@ namespace FriendsAchievementFeed.Views
             IPlayniteAPI api,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
-            AchievementFeedService feedService,
+            FeedManager feedService,
             Game game = null)
         {
-            _logic = new FeedControlLogic(api, settings, logger, feedService);
+            _logic = new FeedControlLogic(api, settings, feedService);
             _pluginSettings = settings;
 
             InitializeComponent();

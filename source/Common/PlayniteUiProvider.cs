@@ -6,7 +6,7 @@ using Playnite.SDK;
 
 namespace Common
 {
-    public static class PlayniteUiHelper
+    public static class PlayniteUiProvider
     {
         public static void HandleEsc(object sender, KeyEventArgs e)
         {

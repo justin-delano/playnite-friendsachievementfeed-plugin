@@ -7,7 +7,7 @@ using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Views.Helpers
 {
-    internal static class GameNavigationHelper
+    internal static class GameNavigator
     {
         public static void NavigateToFriendProfile(string steamId)
         {

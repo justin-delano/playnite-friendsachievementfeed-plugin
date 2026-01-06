@@ -1,5 +1,7 @@
 // CacheRebuildService.cs
+using Common;
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Services.Steam.Models;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using System;
@@ -13,369 +15,42 @@ using SteamFriendModel = FriendsAchievementFeed.Models.SteamFriend;
 
 namespace FriendsAchievementFeed.Services
 {
-    public sealed class CacheRebuildOptions
+    internal sealed class CacheRebuilder
     {
-        public List<string> FamilySharingFriendIDs { get; set; } = null;
-        public bool LimitToFamilySharingFriends { get; set; } = false;
-    }
-
-    /// <summary>
-    /// Flexible scan options:
-    /// - Scan across games, friends, or both.
-    /// - Support explicit game selection (Playnite IDs / Steam AppIds), or inferred via shared library intersection.
-    /// - Quick scan mode supports a tiny incremental update (recent friends + recent games).
-    /// - Emits a unified overall progress bar (OverallIndex/OverallCount).
-    /// </summary>
-    public sealed class CacheScanOptions
-    {
-        public IReadOnlyCollection<Guid> PlayniteGameIds { get; set; }
-        public IReadOnlyCollection<int> SteamAppIds { get; set; }
-        public IReadOnlyCollection<string> FriendSteamIds { get; set; }
-
-        public IReadOnlyCollection<string> IncludeUnownedFriendIds { get; set; }
-
-        public bool IncludeSelf { get; set; } = true;
-        public bool IncludeFriends { get; set; } = true;
-
-        /// <summary>
-        /// If true, refresh friend achievements for all Steam games in Playnite DB, regardless of ownership/minutes.
-        /// NOTE: This can be slow. Default is "shared games per friend", dropping 0-minute entries when minutes are available.
-        /// </summary>
-        public bool FriendsAllLibraryApps { get; set; } = false;
-
-        /// <summary>
-        /// If true, refresh self achievements for all Steam games in Playnite DB (slow).
-        /// NOTE: This overrides default behavior.
-        /// </summary>
-        public bool SelfAllLibraryApps { get; set; } = false;
-
-        /// <summary>
-        /// When explicit apps are selected, allow recording family-share discoveries based on those scans.
-        /// </summary>
-        public bool ExplicitAppsAllowUnownedDiscovery { get; set; } = true;
-
-        /// <summary>
-        /// Quick incremental mode:
-        /// - Choose up to QuickScanRecentFriendsCount most-recent friends (by cached unlock activity).
-        /// - For each, choose up to QuickScanRecentGamesPerFriend most-recent games (by cached unlock activity).
-        /// - Scan ONLY those friend/game pairs (<= friendsCount * gamesPerFriend).
-        /// - Then run self scan (last) ONLY for affected games.
-        ///
-        /// This mode intentionally does NOT expand via IncludeUnownedFriendIds or Forced apps, because the goal is a tiny bounded scan.
-        /// </summary>
-        public bool QuickScanRecentPairs { get; set; } = false;
-
-        public int QuickScanRecentFriendsCount { get; set; } = 5;
-
-        public int QuickScanRecentGamesPerFriend { get; set; } = 5;
-    }
-
-    internal sealed class CacheRebuildService
-    {
-        private readonly ConcurrentDictionary<string, Task<SelfAchievementGameData>> _selfAchTasks =
-            new ConcurrentDictionary<string, Task<SelfAchievementGameData>>(StringComparer.OrdinalIgnoreCase);
-
         private readonly ISteamDataProvider _steam;
         private readonly FeedEntryFactory _entryFactory;
-        private readonly ICacheService _cacheService;
+        private readonly ICacheManager _cacheService;
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly ILogger _logger;
         private readonly IPlayniteAPI _api;
+        private readonly SelfAchievementCacheManager _selfAchievementManager;
 
-        public CacheRebuildService(
+        public CacheRebuilder(
             ISteamDataProvider steam,
             FeedEntryFactory entryFactory,
-            ICacheService cacheService,
+            ICacheManager CacheManager,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
             IPlayniteAPI api)
         {
             _steam = steam;
             _entryFactory = entryFactory;
-            _cacheService = cacheService;
+            _cacheService = CacheManager;
             _settings = settings;
             _logger = logger;
             _api = api;
+            _selfAchievementManager = new SelfAchievementCacheManager(steam, CacheManager, settings, logger);
         }
 
-        // We keep Playnite IDs as the cache key. If Playnite ID is missing, we do not cache self achievements.
-        // Task key includes appId to avoid collisions.
-        private string SelfKey(string playniteGameId, int appId) => playniteGameId + ":" + appId;
-
         public Task<SelfAchievementGameData> EnsureSelfAchievementDataAsync(string playniteGameId, int appId, CancellationToken cancel)
-            => EnsureSelfAchievementDataAsync(playniteGameId, appId, cancel, forceRefresh: false);
+            => _selfAchievementManager.EnsureSelfAchievementDataAsync(playniteGameId, appId, cancel);
 
-        public async Task<SelfAchievementGameData> EnsureSelfAchievementDataAsync(
+        public Task<SelfAchievementGameData> EnsureSelfAchievementDataAsync(
             string playniteGameId,
             int appId,
             CancellationToken cancel,
             bool forceRefresh)
-        {
-            if (appId <= 0)
-                return new SelfAchievementGameData();
-
-            // Playnite ID is required for caching.
-            if (string.IsNullOrWhiteSpace(playniteGameId))
-                return new SelfAchievementGameData();
-
-            if (!forceRefresh)
-            {
-                var diskOrMem = _cacheService.LoadSelfAchievementData(playniteGameId);
-                if (diskOrMem != null)
-                    return diskOrMem;
-            }
-
-            var key = SelfKey(playniteGameId, appId);
-
-            var task = _selfAchTasks.GetOrAdd(key, _ => FetchAndStoreSelfAsync(playniteGameId, appId, cancel));
-            try
-            {
-                return await task.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                _selfAchTasks.TryRemove(key, out _);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _selfAchTasks.TryRemove(key, out _);
-                _logger?.Debug(ex, $"[FAF] Self achievement fetch failed (appId={appId}).");
-                return new SelfAchievementGameData();
-            }
-        }
-
-        private enum SelfFetchOutcome
-        {
-            Saved,
-            UsedExisting,
-            StatsUnavailable,
-            TransientFailure,
-            EmptyRows,
-            EmptyData,
-            NoSteamUser,
-            Error
-        }
-
-        /// <summary>
-        /// Fix #2:
-        /// - Never persist empty self caches (no placeholder writes).
-        /// - Never overwrite a good existing cache when Steam returns TransientFailure/StatsUnavailable/EmptyRows.
-        /// - Returns existing cache when available on those failure modes.
-        /// </summary>
-        private async Task<(SelfAchievementGameData Data, SelfFetchOutcome Outcome)> FetchSelfInternalAsync(
-            string playniteGameId,
-            int appId,
-            CancellationToken cancel)
-        {
-            if (appId <= 0 || string.IsNullOrWhiteSpace(playniteGameId))
-                return (new SelfAchievementGameData(), SelfFetchOutcome.Error);
-
-            var steamUserId = _settings?.SteamUserId;
-            if (!ValidationHelper.HasSteamCredentials(steamUserId, _settings?.SteamApiKey))
-                return (new SelfAchievementGameData(), SelfFetchOutcome.NoSteamUser);
-
-            // Keep existing so we don't "lose" data on failures.
-            var existing = _cacheService.LoadSelfAchievementData(playniteGameId);
-            if (existing?.NoAchievements == true)
-                return (existing, SelfFetchOutcome.UsedExisting);
-
-            AchievementsHealthResult health = null;
-            try
-            {
-                health = await _steam
-                    .GetScrapedAchievementsWithHealthAsync(steamUserId, appId, cancel, includeLocked: true)
-                    .ConfigureAwait(false);
-                _logger?.Debug($"[FAF] Fetched self achievements (appId={appId}): " +
-                    $"TransientFailure={health?.TransientFailure}, StatsUnavailable={health?.StatsUnavailable}, Rows={health?.Rows?.Count ?? 0}, Detail={health?.Detail}");
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logger?.Debug(ex, $"[FAF] Self achievements health fetch threw (appId={appId}).");
-                return (existing ?? new SelfAchievementGameData(), SelfFetchOutcome.Error);
-            }
-
-            if (health == null || health.TransientFailure)
-                return (existing ?? new SelfAchievementGameData(), SelfFetchOutcome.TransientFailure);
-
-            if (health.StatsUnavailable)
-            {
-                // Permanently cache ONLY the "no achievements" case.
-                if (string.Equals(health.Detail, "no_achievements", StringComparison.OrdinalIgnoreCase))
-                {
-                    var marker = existing ?? new SelfAchievementGameData();
-                    marker.LastUpdatedUtc = DateTime.UtcNow;
-                    marker.NoAchievements = true;
-                    marker.UnlockTimesUtc?.Clear();
-                    marker.SelfIconUrls?.Clear();
-
-                    try
-                    {
-                        _cacheService.SaveSelfAchievementData(playniteGameId, marker);
-                        return (marker, SelfFetchOutcome.Saved);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger?.Debug(ex, $"[FAF] Failed to save NoAchievements marker (playniteGameId={playniteGameId}, appId={appId}).");
-                        return (marker, SelfFetchOutcome.Error);
-                    }
-                }
-
-                // Other StatsUnavailable reasons should keep retrying later.
-                return (existing ?? new SelfAchievementGameData(), SelfFetchOutcome.StatsUnavailable);
-            }
-
-            if (health.Detail == "all_hidden")
-            {
-                var empty = existing ?? new SelfAchievementGameData();
-                empty.LastUpdatedUtc = DateTime.UtcNow;
-                empty.NoAchievements = false;
-                empty.UnlockTimesUtc?.Clear();
-                empty.SelfIconUrls?.Clear();
-                try
-                {
-                    _cacheService.SaveSelfAchievementData(playniteGameId, empty);
-                    return (empty, SelfFetchOutcome.Saved);
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Debug(ex, $"[FAF] Failed to save AllHidden data (playniteGameId={playniteGameId}, appId={appId}).");
-                    return (empty, SelfFetchOutcome.Error);
-                }
-            }
-
-            if (health.Rows == null || health.Rows.Count == 0)
-                return (existing ?? new SelfAchievementGameData(), SelfFetchOutcome.EmptyRows);
-
-            var data = new SelfAchievementGameData { LastUpdatedUtc = DateTime.UtcNow, NoAchievements = false };
-
-            foreach (var r in health.Rows)
-            {
-                if (r == null || string.IsNullOrWhiteSpace(r.Key))
-                    continue;
-
-                var unlockUtc = FeedEntryFactory.AsUtcKind(r.UnlockTimeUtc);
-                if (unlockUtc.HasValue)
-                    data.UnlockTimesUtc[r.Key] = unlockUtc.Value;
-
-                if (!string.IsNullOrWhiteSpace(r.IconUrl))
-                    data.SelfIconUrls[r.Key] = r.IconUrl;
-            }
-
-            // Do NOT persist empty caches.
-            // (If you truly got rows but no usable data, keep existing and don't write placeholders.)
-            if ((data.UnlockTimesUtc?.Count ?? 0) == 0 && (data.SelfIconUrls?.Count ?? 0) == 0)
-            {
-                if (existing != null && existing.LastUpdatedUtc != default(DateTime))
-                    return (existing, SelfFetchOutcome.UsedExisting);
-
-                return (new SelfAchievementGameData(), SelfFetchOutcome.EmptyData);
-            }
-
-            try
-            {
-                _cacheService.SaveSelfAchievementData(playniteGameId, data);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Debug(ex, $"[FAF] Failed to save self achievement cache (playniteGameId={playniteGameId}, appId={appId}).");
-                // Still return the fresh data to the caller.
-                return (data, SelfFetchOutcome.Error);
-            }
-
-            return (data, SelfFetchOutcome.Saved);
-        }
-
-        private async Task<SelfAchievementGameData> FetchAndStoreSelfAsync(string playniteGameId, int appId, CancellationToken cancel)
-        {
-            var key = SelfKey(playniteGameId, appId);
-            try
-            {
-                var (data, _) = await FetchSelfInternalAsync(playniteGameId, appId, cancel).ConfigureAwait(false);
-                return data ?? new SelfAchievementGameData();
-            }
-            finally
-            {
-                _selfAchTasks.TryRemove(key, out _);
-            }
-        }
-
-        public enum RebuildUpdateKind
-        {
-            Stage,
-            SelfStarted,
-            SelfProgress,
-            SelfCompleted,
-
-            FriendStarted,
-            FriendProgress,
-            FriendCompleted,
-
-            Completed
-        }
-
-        public enum RebuildStage
-        {
-            NotConfigured,
-            LoadingOwnedGames,
-            LoadingFriends,
-            LoadingExistingCache,
-            LoadingSelfOwnedApps,
-            RefreshingSelfAchievements,
-            ProcessingFriends,
-            Completed
-        }
-
-        public sealed class RebuildUpdate
-        {
-            public RebuildUpdateKind Kind { get; set; }
-            public RebuildStage Stage { get; set; }
-
-            public string FriendSteamId { get; set; }
-            public string FriendPersonaName { get; set; }
-            public int FriendIndex { get; set; }
-            public int FriendCount { get; set; }
-
-            public int CandidateGames { get; set; }
-            public int IncludeUnownedCandidates { get; set; }
-
-            public int FriendNewEntries { get; set; }
-
-            public int FriendAppIndex { get; set; }
-            public int FriendAppCount { get; set; }
-
-            public int SelfAppIndex { get; set; }
-            public int SelfAppCount { get; set; }
-
-            public int CurrentAppId { get; set; }
-            public string CurrentGameName { get; set; }
-
-            public bool FriendOwnershipDataUnavailable { get; set; }
-
-            public int TotalNewEntriesSoFar { get; set; }
-            public int TotalCandidateGamesSoFar { get; set; }
-            public int TotalIncludeUnownedCandidatesSoFar { get; set; }
-
-            // unified progress bar
-            public int OverallIndex { get; set; }
-            public int OverallCount { get; set; }
-        }
-
-        public sealed class RebuildSummary
-        {
-            public int NewEntriesCount { get; set; }
-            public int CandidateGamesTotal { get; set; }
-            public int IncludeUnownedCandidatesTotal { get; set; }
-            public bool NoCandidatesDetected { get; set; }
-            public int FriendsOwnershipDataUnavailable { get; set; }
-        }
-
-        public sealed class RebuildPayload
-        {
-            public RebuildSummary Summary { get; set; } = new RebuildSummary();
-            public List<FeedEntry> NewEntries { get; set; } = new List<FeedEntry>();
-        }
+            => _selfAchievementManager.EnsureSelfAchievementDataAsync(playniteGameId, appId, cancel, forceRefresh);
 
         private void EmitUpdate(Action<RebuildUpdate> onUpdate, RebuildUpdate update)
         {
@@ -397,7 +72,7 @@ namespace FriendsAchievementFeed.Services
         // --------------------
         private sealed class Progress
         {
-            private readonly CacheRebuildService _svc;
+            private readonly CacheRebuilder _svc;
             private readonly Action<RebuildUpdate> _cb;
             private readonly int _emitEvery;
             private readonly TimeSpan _min;
@@ -406,7 +81,7 @@ namespace FriendsAchievementFeed.Services
             public int OverallIndex { get; private set; }
             public int OverallCount { get; }
 
-            public Progress(CacheRebuildService svc, Action<RebuildUpdate> cb, int overallCount, int emitEvery = 10, int minMs = 250)
+            public Progress(CacheRebuilder svc, Action<RebuildUpdate> cb, int overallCount, int emitEvery = 10, int minMs = 250)
             {
                 _svc = svc; _cb = cb;
                 OverallCount = Math.Max(0, overallCount);
@@ -506,14 +181,14 @@ namespace FriendsAchievementFeed.Services
         private sealed class FriendRowAnalysis
         {
             public bool SawAnyUnlocked;
-            public List<(ScrapedAchievementRow Row, DateTime UnlockUtc)> NewCandidates =
-                new List<(ScrapedAchievementRow, DateTime)>();
+            public List<(FriendsAchievementFeed.Services.Steam.Models.ScrapedAchievementRow Row, DateTime UnlockUtc)> NewCandidates =
+                new List<(FriendsAchievementFeed.Services.Steam.Models.ScrapedAchievementRow, DateTime)>();
         }
 
         private FriendRowAnalysis AnalyzeFriendRowsForApp(
             string friendSteamId,
             int appId,
-            List<ScrapedAchievementRow> friendRows,
+            List<FriendsAchievementFeed.Services.Steam.Models.ScrapedAchievementRow> friendRows,
             bool friendHasAnyCached,
             Dictionary<int, DateTime> maxUnlockByAppForFriend,
             HashSet<string> existingIds)
@@ -537,7 +212,7 @@ namespace FriendsAchievementFeed.Services
                 if (row == null || string.IsNullOrWhiteSpace(row.Key))
                     continue;
 
-                var unlockUtc = FeedEntryFactory.AsUtcKind(row.UnlockTimeUtc);
+                var unlockUtc = DateTimeUtilities.AsUtcKind(row.UnlockTimeUtc);
                 if (!unlockUtc.HasValue)
                     continue;
 
@@ -634,7 +309,7 @@ namespace FriendsAchievementFeed.Services
 
             var payload = new RebuildPayload();
 
-            if (!ValidationHelper.HasSteamCredentials(_settings?.SteamUserId, _settings?.SteamApiKey))
+            if (!InputValidator.HasSteamCredentials(_settings?.SteamUserId, _settings?.SteamApiKey))
             {
                 EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.NotConfigured });
                 payload.Summary = new RebuildSummary();
@@ -645,7 +320,7 @@ namespace FriendsAchievementFeed.Services
 
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingOwnedGames });
 
-            var steamGamesDict = SteamLibraryHelper.BuildSteamLibraryGamesDict(_api, _steam, _logger);
+            var steamGamesDict = SteamLibraryProvider.BuildSteamLibraryGamesDict(_api, _steam, _logger);
             var myLibraryAppIds = new HashSet<int>(steamGamesDict.Keys);
 
             // Defer building PlayniteId->AppId map and family-share forced apps until we know
@@ -656,11 +331,12 @@ namespace FriendsAchievementFeed.Services
 
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingFriends });
 
-            var allFriends = options.IncludeFriends
-                ? (await _steam.GetFriendsAsync(_settings.SteamUserId, _settings.SteamApiKey, cancel).ConfigureAwait(false) ?? new List<SteamFriendModel>())
-                : new List<SteamFriendModel>();
+            var friendsResult = options.IncludeFriends
+                ? await _steam.GetFriendsAsync(_settings.SteamUserId, _settings.SteamApiKey, cancel).ConfigureAwait(false)
+                : null;
+            var allFriends = friendsResult ?? new List<SteamFriendModel>();
 
-            var friends = FriendScanHelper.FilterFriends(allFriends, options.FriendSteamIds);
+            var friends = FriendScanner.FilterFriends(allFriends, options.FriendSteamIds);
 
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingExistingCache });
 
@@ -670,9 +346,9 @@ namespace FriendsAchievementFeed.Services
                 existingEntries.Where(e => e != null && !string.IsNullOrWhiteSpace(e.Id)).Select(e => e.Id),
                 StringComparer.OrdinalIgnoreCase);
 
-            var friendAppMaxUnlock = FriendScanHelper.BuildFriendAppMaxUnlockMap(existingEntries);
+            var friendAppMaxUnlock = FriendScanner.BuildFriendAppMaxUnlockMap(existingEntries);
 
-            var includeUnownedSet = FriendScanHelper.ToSet(options.IncludeUnownedFriendIds);
+            var includeUnownedSet = FriendScanner.ToSet(options.IncludeUnownedFriendIds);
 
             // Explicit apps still exist as a general scan feature. QuickScanRecentPairs overrides it for friend selection.
             var explicitApps = ResolveExplicitAppIds(options, steamGamesDict);
@@ -686,7 +362,7 @@ namespace FriendsAchievementFeed.Services
             // Quick scans intentionally avoid family-share expansion and do not require this mapping.
             if (options.IncludeFriends && !quickScan)
             {
-                playniteIdToAppId = SteamLibraryHelper.BuildPlayniteIdToAppId(steamGamesDict);
+                playniteIdToAppId = SteamLibraryProvider.BuildPlayniteIdToAppId(steamGamesDict);
                 forcedAppsByFriend = BuildFamilySharingForcedAppsByFriend(playniteIdToAppId);
             }
 
@@ -1006,7 +682,7 @@ namespace FriendsAchievementFeed.Services
                 }
 
                 // Only Steam games in Playnite DB
-                selfMinutes = SteamLibraryHelper.FilterMinutesToLibrary(selfMinutes, myLibraryAppIds);
+                selfMinutes = SteamLibraryProvider.FilterMinutesToLibrary(selfMinutes, myLibraryAppIds);
 
                 if (quickScan)
                 {
@@ -1018,7 +694,7 @@ namespace FriendsAchievementFeed.Services
                     else
                     {
                         selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? SteamLibraryHelper.FilterToNonZeroMinutesApps(selfBaseApps, selfMinutes)
+                            ? SteamLibraryProvider.FilterToNonZeroMinutesApps(selfBaseApps, selfMinutes)
                             : selfBaseApps;
                     }
                 }
@@ -1035,7 +711,7 @@ namespace FriendsAchievementFeed.Services
                         }
 
                         selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? SteamLibraryHelper.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
+                            ? SteamLibraryProvider.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
                             : baseApps;
                     }
                     else if (options.SelfAllLibraryApps)
@@ -1048,7 +724,7 @@ namespace FriendsAchievementFeed.Services
                         // Default: nominate all self games; if minutes are available, drop 0-minute games.
                         var baseApps = steamGamesDict.Keys.Where(a => a > 0).ToList();
                         selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? SteamLibraryHelper.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
+                            ? SteamLibraryProvider.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
                             : baseApps;
                     }
                 }
@@ -1273,18 +949,20 @@ namespace FriendsAchievementFeed.Services
 
                     try
                     {
-                        var result = await FetchSelfInternalAsync(pid, appId, cancel).ConfigureAwait(false);
-                        var outcome = result.Outcome;
-                        switch (outcome)
+                        var selfData = await _selfAchievementManager.EnsureSelfAchievementDataAsync(pid, appId, cancel, forceRefresh: true).ConfigureAwait(false);
+                        // For now, just count as saved if we got non-empty data
+                        if (selfData != null && selfData.LastUpdatedUtc != default(DateTime))
                         {
-                            case SelfFetchOutcome.Saved: saved++; break;
-                            case SelfFetchOutcome.UsedExisting: usedExisting++; break;
-                            case SelfFetchOutcome.StatsUnavailable: statsUnavailable++; break;
-                            case SelfFetchOutcome.TransientFailure: transient++; break;
-                            case SelfFetchOutcome.EmptyRows: emptyRows++; break;
-                            case SelfFetchOutcome.EmptyData: emptyData++; break;
-                            case SelfFetchOutcome.NoSteamUser: noSteamUser++; break;
-                            default: errors++; break;
+                            if (selfData.NoAchievements)
+                                statsUnavailable++;
+                            else if ((selfData.UnlockTimesUtc?.Count ?? 0) > 0 || (selfData.SelfIconUrls?.Count ?? 0) > 0)
+                                saved++;
+                            else
+                                usedExisting++;
+                        }
+                        else
+                        {
+                            emptyData++;
                         }
                     }
                     catch (OperationCanceledException) { throw; }

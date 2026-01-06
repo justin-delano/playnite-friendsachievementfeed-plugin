@@ -8,6 +8,7 @@ using Playnite.SDK.Data;
 using System.IO;
 using Common;
 using System.Linq;
+using FriendsAchievementFeed.Services;
 
 namespace FriendsAchievementFeed.Models
 {
@@ -374,12 +375,12 @@ namespace FriendsAchievementFeed.Models
 
             if (string.IsNullOrWhiteSpace(SteamUserId))
             {
-                errors.Add(ResourceProvider.GetString("LOCFriendsAchFeed_Error_MissingSteamUserId"));
+                errors.Add(StringResources.GetString("LOCFriendsAchFeed_Error_MissingSteamUserId"));
             }
 
             if (MaxFeedItems <= 0)
             {
-                errors.Add(ResourceProvider.GetString("LOCFriendsAchFeed_Error_InvalidMaxFeedItems"));
+                errors.Add(StringResources.GetString("LOCFriendsAchFeed_Error_InvalidMaxFeedItems"));
             }
 
             // return true if there are no errors

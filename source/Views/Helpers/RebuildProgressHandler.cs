@@ -9,7 +9,7 @@ namespace FriendsAchievementFeed.Views.Helpers
 {
     internal sealed class RebuildProgressHandler
     {
-        private readonly AchievementFeedService _feedService;
+        private readonly FeedManager _feedService;
         private readonly ILogger _logger;
         private readonly object _progressUiLock = new object();
         private DateTime _lastProgressUiUpdateUtc = DateTime.MinValue;
@@ -18,7 +18,7 @@ namespace FriendsAchievementFeed.Views.Helpers
 
         public event EventHandler<ProgressUpdateEventArgs> ProgressUpdated;
 
-        public RebuildProgressHandler(AchievementFeedService feedService, ILogger logger)
+        public RebuildProgressHandler(FeedManager feedService, ILogger logger)
         {
             _feedService = feedService ?? throw new ArgumentNullException(nameof(feedService));
             _logger = logger;

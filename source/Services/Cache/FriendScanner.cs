@@ -6,7 +6,7 @@ using FriendsAchievementFeed.Models;
 
 namespace FriendsAchievementFeed.Services
 {
-    internal static class FriendScanHelper
+    internal static class FriendScanner
     {
         public static HashSet<string> ToSet(IEnumerable<string> ids)
         {

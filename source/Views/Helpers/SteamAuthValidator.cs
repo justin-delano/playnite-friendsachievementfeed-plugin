@@ -5,13 +5,14 @@ using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Services;
 using Common;
 using Playnite.SDK;
+using StringResources = FriendsAchievementFeed.Services.StringResources;
 
 namespace FriendsAchievementFeed.Views.Helpers
 {
     internal sealed class SteamAuthValidator
     {
         private readonly FriendsAchievementFeedSettings _settings;
-        private readonly AchievementFeedService _feedService;
+        private readonly FeedManager _feedService;
         private CancellationTokenSource _authCheckCts;
         private bool? _authValid = null;
         private string _authMessage = null;
@@ -27,7 +28,7 @@ namespace FriendsAchievementFeed.Views.Helpers
         public bool IsSteamReady => IsSteamKeyConfigured && IsSteamAuthValid;
         public string AuthMessage => _authMessage;
 
-        public SteamAuthValidator(FriendsAchievementFeedSettings settings, AchievementFeedService feedService)
+        public SteamAuthValidator(FriendsAchievementFeedSettings settings, FeedManager feedService)
         {
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _feedService = feedService ?? throw new ArgumentNullException(nameof(feedService));
@@ -50,13 +51,13 @@ namespace FriendsAchievementFeed.Views.Helpers
                     if (!IsSteamKeyConfigured)
                     {
                         _authValid = false;
-                        _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
+                        _authMessage = StringResources.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
                         RaiseAuthStateChanged();
                         return;
                     }
 
                     _authValid = null;
-                    _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Settings_CheckingSteamAuth") ?? "Checking Steam authentication...";
+                    _authMessage = StringResources.GetString("LOCFriendsAchFeed_Settings_CheckingSteamAuth") ?? "Checking Steam authentication...";
                     RaiseAuthStateChanged();
 
                     var result = await _feedService.TestSteamAuthAsync().ConfigureAwait(false);
@@ -68,7 +69,7 @@ namespace FriendsAchievementFeed.Views.Helpers
                 catch (Exception)
                 {
                     _authValid = false;
-                    _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured") ?? "Steam not configured.";
+                    _authMessage = StringResources.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured") ?? "Steam not configured.";
                     RaiseAuthStateChanged();
                 }
             }, token);
@@ -79,7 +80,7 @@ namespace FriendsAchievementFeed.Views.Helpers
             if (!IsSteamKeyConfigured)
             {
                 _authValid = false;
-                _authMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured")
+                _authMessage = StringResources.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured")
                               ?? "Steam API key / user id not configured.";
                 RaiseAuthStateChanged();
 
@@ -97,7 +98,7 @@ namespace FriendsAchievementFeed.Views.Helpers
 
             if (!result.Success && showDialog)
             {
-                showDialogAction?.Invoke(_authMessage ?? ResourceProvider.GetString("LOCFriendsAchFeed_Settings_SteamAuth_WebAuthUnavailable"));
+                showDialogAction?.Invoke(_authMessage ?? StringResources.GetString("LOCFriendsAchFeed_Settings_SteamAuth_WebAuthUnavailable"));
             }
 
             return result.Success;

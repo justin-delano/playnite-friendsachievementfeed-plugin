@@ -2,7 +2,7 @@ using System;
 
 namespace FriendsAchievementFeed.Services
 {
-    internal static class ValidationHelper
+    internal static class InputValidator
     {
         public static bool HasSteamCredentials(string steamUserId, string steamApiKey) =>
             !string.IsNullOrWhiteSpace(steamUserId) && !string.IsNullOrWhiteSpace(steamApiKey);

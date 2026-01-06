@@ -1,4 +1,6 @@
+using Common;
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Services.Steam.Models;
 using Playnite.SDK.Models;
 using System;
 
@@ -6,18 +8,10 @@ namespace FriendsAchievementFeed.Services
 {
     internal sealed class FeedEntryFactory
     {
-        public static DateTime AsUtcKind(DateTime dt)
-        {
-            if (dt.Kind == DateTimeKind.Utc) return dt;
-            if (dt.Kind == DateTimeKind.Local) return dt.ToUniversalTime();
-            return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-        }
-
-        public static DateTime? AsUtcKind(DateTime? dt) => dt.HasValue ? AsUtcKind(dt.Value) : (DateTime?)null;
 
         // friend-only persisted entry
         public FeedEntry CreateCachedFriendEntry(
-            SteamFriend friend,
+            FriendsAchievementFeed.Models.SteamFriend friend,
             Game game,
             int appId,
             ScrapedAchievementRow row,

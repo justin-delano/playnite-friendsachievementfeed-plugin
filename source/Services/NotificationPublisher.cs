@@ -23,9 +23,9 @@ namespace FriendsAchievementFeed.Services
             if (_settings?.EnableNotifications != true || !_settings.NotifyPeriodicUpdates)
                 return;
 
-            var title = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName");
+            var title = StringResources.GetString("LOCFriendsAchFeed_Title_PluginName");
             var text = string.IsNullOrWhiteSpace(status)
-                ? ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Completed")
+                ? StringResources.GetString("LOCFriendsAchFeed_Rebuild_Completed")
                 : status;
 
             try

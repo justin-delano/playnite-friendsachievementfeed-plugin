@@ -119,22 +119,13 @@ namespace FriendsAchievementFeed.Models
             get => _SelfUnlockTime;
             set
             {
-                DateTime? utc = null;
-                if (value.HasValue)
-                {
-                    var v = value.Value;
-                    if (v.Kind == DateTimeKind.Utc) utc = v;
-                    else if (v.Kind == DateTimeKind.Local) utc = v.ToUniversalTime();
-                    else utc = DateTime.SpecifyKind(v, DateTimeKind.Utc);
-                }
-
-                SetValue(ref _SelfUnlockTime, utc);
+                SetValue(ref _SelfUnlockTime, DateTimeUtilities.AsUtcKind(value));
                 OnPropertyChanged(nameof(SelfUnlockTimeLocal));
                 RaiseSpoilerUiChanged();
             }
         }
 
-        public DateTime? SelfUnlockTimeLocal => _SelfUnlockTime?.ToLocalTime();
+        public DateTime? SelfUnlockTimeLocal => DateTimeUtilities.AsLocalFromUtc(_SelfUnlockTime);
 
         private DateTime _friendUnlockTime;
         public DateTime FriendUnlockTime
@@ -142,16 +133,12 @@ namespace FriendsAchievementFeed.Models
             get => DateTime.SpecifyKind(_friendUnlockTime, DateTimeKind.Utc);
             set
             {
-                var v = value;
-                if (v.Kind == DateTimeKind.Local) v = v.ToUniversalTime();
-                else if (v.Kind == DateTimeKind.Unspecified) v = DateTime.SpecifyKind(v, DateTimeKind.Utc);
-
-                SetValue(ref _friendUnlockTime, v);
+                SetValue(ref _friendUnlockTime, DateTimeUtilities.AsUtcKind(value));
                 OnPropertyChanged(nameof(FriendUnlockTimeLocal));
             }
         }
 
-        public DateTime FriendUnlockTimeLocal => FriendUnlockTime.ToLocalTime();
+        public DateTime FriendUnlockTimeLocal => DateTimeUtilities.AsLocalFromUtc(FriendUnlockTime);
 
         // Expose explicit UTC property for persisted cache shape.
         public DateTime FriendUnlockTimeUtc
@@ -159,11 +146,7 @@ namespace FriendsAchievementFeed.Models
             get => DateTime.SpecifyKind(_friendUnlockTime, DateTimeKind.Utc);
             set
             {
-                var v = value;
-                if (v.Kind == DateTimeKind.Local) v = v.ToUniversalTime();
-                else if (v.Kind == DateTimeKind.Unspecified) v = DateTime.SpecifyKind(v, DateTimeKind.Utc);
-
-                SetValue(ref _friendUnlockTime, v);
+                SetValue(ref _friendUnlockTime, DateTimeUtilities.AsUtcKind(value));
                 OnPropertyChanged(nameof(FriendUnlockTimeLocal));
             }
         }
@@ -185,9 +168,12 @@ namespace FriendsAchievementFeed.Models
             OnPropertyChanged(nameof(SelfAchievementIconResolved));
             OnPropertyChanged(nameof(DisplayIcon));
         }
-}
+    }
 
-
+    /// <summary>
+    /// Friend display model used throughout the UI.
+    /// Not to be confused with Services.Steam.Models.SteamFriend which is the API response model.
+    /// </summary>
     public class SteamFriend
     {
         public string SteamId { get; set; }

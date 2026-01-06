@@ -13,6 +13,7 @@ using Playnite.SDK.Models;
 using Playnite.SDK.Plugins;
 using Common;
 using System.Threading.Tasks;
+using StringResources = FriendsAchievementFeed.Services.StringResources;
 using System.Threading;
 
 namespace FriendsAchievementFeed
@@ -25,10 +26,10 @@ namespace FriendsAchievementFeed
         public const string SourceName = "FriendsAchievementFeed";
 
         private readonly FriendsAchievementFeedSettings _settings;
-        private readonly AchievementFeedService _feedService;
+        private readonly FeedManager _feedService;
         private readonly NotificationPublisher _notifications;
 
-        private readonly BackgroundUpdateService _backgroundUpdates;
+        private readonly BackgroundUpdater _backgroundUpdates;
 
         // Startup gate: ensure SteamID64 persistence happens BEFORE anything else.
         private readonly object _startupInitLock = new object();
@@ -39,7 +40,7 @@ namespace FriendsAchievementFeed
             Guid.Parse("10f90193-72aa-4cdb-b16d-3e6b1f0feb17");
 
         public FriendsAchievementFeedSettings Settings => _settings;
-        public AchievementFeedService FeedService => _feedService;
+        public FeedManager FeedService => _feedService;
 
         public FriendsAchievementFeedPlugin(IPlayniteAPI api) : base(api)
         {
@@ -50,9 +51,9 @@ namespace FriendsAchievementFeed
                 HasSettings = true
             };
 
-            _feedService = new AchievementFeedService(api, _settings, _logger, this);
+            _feedService = new FeedManager(api, _settings, _logger, this);
             _notifications = new NotificationPublisher(api, _settings, _logger);
-            _backgroundUpdates = new BackgroundUpdateService(_feedService, _settings, _logger, _notifications, UpdateGameFeedGroupsForCurrentGame);
+            _backgroundUpdates = new BackgroundUpdater(_feedService, _settings, _logger, _notifications, UpdateGameFeedGroupsForCurrentGame);
             // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
             {
@@ -108,7 +109,7 @@ namespace FriendsAchievementFeed
             }
 
             // Put everything under this submenu:
-            var section = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"); // e.g. "Friends Achievement Feed"
+            var section = StringResources.GetString("LOCFriendsAchFeed_Title_PluginName"); // e.g. "Friends Achievement Feed"
 
             // 1) Open feed
             yield return new GameMenuItem
@@ -141,10 +142,10 @@ namespace FriendsAchievementFeed
 
             var host = new UserControl { Content = view };
 
-            var titleFormat = ResourceProvider.GetString("LOCFriendsAchFeed_WindowTitle_GameFeedFor");
+            var titleFormat = StringResources.GetString("LOCFriendsAchFeed_WindowTitle_GameFeedFor");
             var title = string.Format(titleFormat, game.Name);
 
-            var window = PlayniteUiHelper.CreateExtensionWindow(title, host, windowOptions);
+            var window = PlayniteUiProvider.CreateExtensionWindow(title, host, windowOptions);
             window.Show();
         }
 
@@ -154,7 +155,7 @@ namespace FriendsAchievementFeed
         {
             yield return new SidebarItem
             {
-                Title = ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"),
+                Title = StringResources.GetString("LOCFriendsAchFeed_Title_PluginName"),
                 Type = SiderbarItemType.View,
                 Icon = GetSidebarIcon(),
                 Opened = () => new ContentControl
@@ -172,7 +173,7 @@ namespace FriendsAchievementFeed
                 FontSize = 18
             };
 
-            var font = ResourceProvider.GetResource("FontIcoFont") as FontFamily;
+            var font = Playnite.SDK.ResourceProvider.GetResource("FontIcoFont") as FontFamily;
             tb.FontFamily = font ?? new FontFamily("Segoe UI Symbol");
             tb.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush");
 

@@ -18,9 +18,9 @@ namespace FriendsAchievementFeed.Views
             IPlayniteAPI api,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
-            AchievementFeedService feedService)
+            FeedManager feedService)
         {
-            _logic = new FeedControlLogic(api, settings, logger, feedService);
+            _logic = new FeedControlLogic(api, settings, feedService);
             InitializeComponent();
             MainControl.Logic = _logic;
             MainControl.DisposeLogicOnUnload = true;

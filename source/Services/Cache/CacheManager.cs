@@ -10,7 +10,7 @@ using Playnite.SDK;
 namespace FriendsAchievementFeed.Services
 {
 
-    public sealed class CacheService : ICacheManager
+    public sealed class CacheManager : ICacheManager
     {
         private readonly ILogger _logger;
         private readonly CacheStorage _storage;
@@ -35,7 +35,7 @@ namespace FriendsAchievementFeed.Services
 
         public event EventHandler CacheChanged;
 
-        public CacheService(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin)
+        public CacheManager(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin)
         {
             _logger = logger;
             _storage = new CacheStorage(plugin, logger);

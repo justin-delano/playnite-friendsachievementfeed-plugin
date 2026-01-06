@@ -6,9 +6,9 @@ using FriendsAchievementFeed.Models;
 
 namespace FriendsAchievementFeed.Services
 {
-    public class BackgroundUpdateService
+    public class BackgroundUpdater
     {
-        private readonly AchievementFeedService _feedService;
+        private readonly FeedManager _feedService;
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly ILogger _logger;
         private readonly NotificationPublisher _notifications;
@@ -17,8 +17,8 @@ namespace FriendsAchievementFeed.Services
         private readonly object _ctsLock = new object();
         private CancellationTokenSource _cts;
 
-        public BackgroundUpdateService(
-            AchievementFeedService feedService,
+        public BackgroundUpdater(
+            FeedManager feedService,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
             NotificationPublisher notifications,

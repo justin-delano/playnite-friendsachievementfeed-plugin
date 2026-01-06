@@ -1,4 +1,5 @@
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Services.Steam.Models;
 using Playnite.SDK.Models;
 using System.Collections.Generic;
 using System.Threading;
@@ -27,7 +28,7 @@ namespace FriendsAchievementFeed.Services
         Task<(bool Success, string Message)> TestSteamAuthAsync(string steamUserId);
 
         // Friends (prefer API) - keep apiKey optional if you want to allow settings fallback
-        Task<List<SteamFriend>> GetFriendsAsync(
+        Task<List<FriendsAchievementFeed.Models.SteamFriend>> GetFriendsAsync(
             string steamId,
             string apiKey,
             CancellationToken cancel);

@@ -12,7 +12,7 @@ using Common;
 
 namespace FriendsAchievementFeed.Services
 {
-    public class AchievementFeedService
+    public class FeedManager
     {
         private readonly object _runLock = new object();
         private CancellationTokenSource _activeRunCts;
@@ -54,7 +54,7 @@ namespace FriendsAchievementFeed.Services
             remove => _cacheService.CacheChanged -= value;
         }
 
-        public AchievementFeedService(
+        public FeedManager(
             IPlayniteAPI api,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
@@ -65,7 +65,7 @@ namespace FriendsAchievementFeed.Services
             _logger = logger;
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
 
-            _cacheService = new CacheService(api, logger, _plugin);
+            _cacheService = new CacheManager(api, logger, _plugin);
 
             _steam = new SteamDataProvider(_api, _logger, _plugin, _cacheService);
             _entryFactory = new FeedEntryFactory();

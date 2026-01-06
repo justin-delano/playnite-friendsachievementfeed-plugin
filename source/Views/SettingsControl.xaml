@@ -391,7 +391,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <TextBlock x:Name="FriendsStatusText"
+                        <TextBlock Text="{Binding FriendsStatusText, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                 Foreground="{DynamicResource TextBrush}"
                                 Opacity="0.8"
                                 Margin="0,8,0,0" />

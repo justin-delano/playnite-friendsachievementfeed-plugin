@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace Common.SteamKitModels
+namespace FriendsAchievementFeed.Services.Steam.Models
 {
     public class SteamFriend
     {

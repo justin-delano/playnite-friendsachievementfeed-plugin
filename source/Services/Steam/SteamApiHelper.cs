@@ -4,6 +4,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using FriendsAchievementFeed.Services.Steam;
+using FriendsAchievementFeed.Services.Steam.Models;
 using Playnite.SDK;
 using Playnite.SDK.Data;
 
@@ -151,7 +153,7 @@ namespace FriendsAchievementFeed.Services.Steam
 
             try
             {
-                var root = Serialization.FromJson<OwnedGamesRoot>(json);
+                var root = Serialization.FromJson<OwnedGamesEnvelope>(json);
                 var games = root?.Response?.Games;
                 if (games == null || games.Count == 0) return result;
 
@@ -181,42 +183,6 @@ namespace FriendsAchievementFeed.Services.Steam
                     chunk.Add(ids[i + j]);
                 yield return chunk;
             }
-        }
-
-        // JSON models for API responses
-        private class PlayerSummariesRoot
-        {
-            public PlayerSummariesResponse Response { get; set; }
-        }
-
-        private class PlayerSummariesResponse  
-        {
-            public List<PlayerSummary> Players { get; set; }
-        }
-
-        private class PlayerSummary
-        {
-            public string SteamId { get; set; }
-            public string PersonaName { get; set; }
-            public string Avatar { get; set; }
-            public string AvatarMedium { get; set; }
-            public string AvatarFull { get; set; }
-        }
-
-        private class OwnedGamesRoot
-        {
-            public OwnedGamesResponse Response { get; set; }
-        }
-
-        private class OwnedGamesResponse
-        {
-            public List<OwnedGame> Games { get; set; }
-        }
-
-        private class OwnedGame
-        {
-            public int? AppId { get; set; }
-            public int? PlaytimeForever { get; set; }
         }
     }
 }

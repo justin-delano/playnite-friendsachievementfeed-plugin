@@ -7,12 +7,12 @@ using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Views.Helpers
 {
-    internal sealed class SteamAuthUiHelper
+    internal sealed class SteamAuthenticator
     {
         private readonly SteamClient _steam;
         private readonly ILogger _logger;
 
-        public SteamAuthUiHelper(SteamClient steam, ILogger logger)
+        public SteamAuthenticator(SteamClient steam, ILogger logger)
         {
             _steam = steam ?? throw new ArgumentNullException(nameof(steam));
             _logger = logger;

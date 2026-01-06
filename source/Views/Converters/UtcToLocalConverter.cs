@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.Windows.Data;
+using Common;
 
 namespace FriendsAchievementFeed.Views.Converters
 {
@@ -16,17 +17,7 @@ namespace FriendsAchievementFeed.Views.Converters
 
             if (value is DateTime dt)
             {
-                if (dt.Kind == DateTimeKind.Local)
-                {
-                    return dt;
-                }
-
-                if (dt.Kind == DateTimeKind.Utc)
-                {
-                    return dt.ToLocalTime();
-                }
-
-                return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
+                return DateTimeUtilities.AsLocalFromUtc(dt);
             }
 
             return value;

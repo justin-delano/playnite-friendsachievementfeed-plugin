@@ -1,1324 +1,267 @@
 using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Data;
-using System.Windows.Input;
-using System.Windows.Threading;
-using Common;
+using FriendsAchievementFeed.Controllers;
+using FriendsAchievementFeed.ViewModels;
 using FriendsAchievementFeed.Services;
 using FriendsAchievementFeed.Models;
-using FriendsAchievementFeed.Views.Helpers;
 using Playnite.SDK;
 
 namespace FriendsAchievementFeed.Views
 {
+    /// <summary>
+    /// Simplified feed control logic that delegates to controller and view model.
+    /// The original large implementation has been split into FeedController and FeedViewModel.
+    /// </summary>
     public class FeedControlLogic : INotifyPropertyChanged, IDisposable
     {
-        private readonly IPlayniteAPI _api;
+        private readonly FeedController _controller;
+        private readonly FeedViewModel _viewModel;
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly ILogger _logger;
-        private readonly AchievementFeedService _feedService;
-
-        private readonly AsyncCommand _triggerRebuildCmd;
-        private readonly AsyncCommand _triggerIncrementalScanCmd;
-        private readonly AsyncCommand _refreshCmd;
-        private readonly AsyncCommand _cancelRebuildCmd;
-
-        // Helpers for auth and progress
-        private readonly SteamAuthValidator _authValidator;
-        private readonly RebuildProgressHandler _progressHandler;
-
-        // per-game command lives here (organization)
-        private AsyncCommand _singleGameScanCmd;
-        private AsyncCommand _quickScanCmd;
-
-        // One-shot dialog throttling (avoid popup spam)
-        private DateTime _lastAuthDialogUtc = DateTime.MinValue;
-        private static readonly TimeSpan AuthDialogCooldown = TimeSpan.FromSeconds(5);
 
         public event PropertyChangedEventHandler PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null) =>
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
-        private bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
+        public FeedControlLogic(IPlayniteAPI api, FriendsAchievementFeedSettings settings, FeedManager feedService)
         {
-            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-            field = value;
-            OnPropertyChanged(propertyName);
-            return true;
+            _logger = LogManager.GetLogger(nameof(FeedControlLogic));
+            _settings = settings;
+            
+            // Initialize the controller and view model
+            _controller = new FeedController(api, settings, feedService);
+            _viewModel = new FeedViewModel();
+            
+            // Wire up the controller's game providers if needed
+            _controller.GameNameProvider = GetGameNameForFilter;
+            _controller.GameIdProvider = GetGameIdForFilter;
+            _controller.ViewModelProvider = () => _viewModel;
+
+            // Forward PropertyChanged events from view model
+            _viewModel.PropertyChanged += (s, e) => PropertyChanged?.Invoke(this, e);
+            
+            // Hook up settings changes
+            if (_settings != null)
+            {
+                _settings.PropertyChanged += OnSettingsPropertyChanged;
+            }
+            
+            // Initialize the feed with cached data if cache is valid
+            if (feedService?.Cache?.IsCacheValid() == true)
+            {
+                System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _controller.RefreshFeedAsync(default);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.Error(ex, "Error initializing feed from cache");
+                    }
+                });
+            }
         }
 
-        public ILogger Logger => _logger;
+        #region Public Properties (Delegated to ViewModel)
+
+        public System.Collections.ObjectModel.ObservableCollection<FriendsAchievementFeed.Models.FeedEntry> AllEntries => _viewModel.AllEntries;
+        public object EntriesView => _viewModel.EntriesView;
+        public System.Collections.ObjectModel.ObservableCollection<FriendsAchievementFeed.Models.FeedGroup> GroupedEntries => _viewModel.GroupedEntries;
+        public bool HasAnyEntries => _viewModel.HasAnyEntries;
+
+        public System.Collections.ObjectModel.ObservableCollection<string> FriendFilters => _viewModel.FriendFilters;
+        public System.Collections.ObjectModel.ObservableCollection<string> GameFilters => _viewModel.GameFilters;
+
+        public string CacheLastUpdatedText
+        {
+            get => _viewModel.CacheLastUpdatedText;
+            set => _viewModel.CacheLastUpdatedText = value;
+        }
+
+        public string StatusMessage
+        {
+            get => _viewModel.StatusMessage;
+            set => _viewModel.StatusMessage = value;
+        }
+
+        public bool IsLoading
+        {
+            get => _viewModel.IsLoading;
+            set => _viewModel.IsLoading = value;
+        }
+
+        public bool ShowProgress
+        {
+            get => _viewModel.ShowProgress;
+            set => _viewModel.ShowProgress = value;
+        }
+
+        public double ProgressPercent
+        {
+            get => _viewModel.ProgressPercent;
+            set => _viewModel.ProgressPercent = value;
+        }
+
+        public string ProgressDetail
+        {
+            get => _viewModel.ProgressDetail;
+            set => _viewModel.ProgressDetail = value;
+        }
+
+        public string FriendSearchText
+        {
+            get => _viewModel.FriendSearchText;
+            set => _viewModel.FriendSearchText = value;
+        }
+
+        public string GameSearchText
+        {
+            get => _viewModel.GameSearchText;
+            set => _viewModel.GameSearchText = value;
+        }
+
+        public string AchievementSearchText
+        {
+            get => _viewModel.AchievementSearchText;
+            set => _viewModel.AchievementSearchText = value;
+        }
+
+        public int IncrementalRecentFriendsCount
+        {
+            get => _viewModel.IncrementalRecentFriendsCount;
+            set => _viewModel.IncrementalRecentFriendsCount = value;
+        }
+
+        public int IncrementalRecentGamesPerFriend
+        {
+            get => _viewModel.IncrementalRecentGamesPerFriend;
+            set => _viewModel.IncrementalRecentGamesPerFriend = value;
+        }
+
+        #endregion
+
+        #region Settings Properties
 
         public int FriendAvatarSize => _settings?.FriendAvatarSize ?? 32;
         public int AchievementIconSize => _settings?.AchievementIconSize ?? 40;
-
         public bool ShowSelfUnlockTime => _settings?.IncludeSelfUnlockTime ?? false;
         public bool HideAchievementsLockedForSelf => _settings?.HideAchievementsLockedForSelf ?? false;
 
-        private bool _isLoading;
-        public bool IsLoading
-        {
-            get => _isLoading;
-            set
-            {
-                if (!SetField(ref _isLoading, value)) return;
-                NotifyCommandsChanged();
-            }
-        }
+        #endregion
 
-        private string _statusMessage;
-        public string StatusMessage
-        {
-            get => _statusMessage;
-            set => SetField(ref _statusMessage, value);
-        }
+        #region Commands (Delegated to Controller)
 
-        private double _progressPercent;
-        public double ProgressPercent
-        {
-            get => _progressPercent;
-            set => SetField(ref _progressPercent, value);
-        }
+        public System.Windows.Input.ICommand TriggerRebuildCommand => _controller.TriggerRebuildCommand;
+        public System.Windows.Input.ICommand TriggerIncrementalScanCommand => _controller.TriggerIncrementalScanCommand;
+        public System.Windows.Input.ICommand RefreshCommand => _controller.RefreshCommand;
+        public System.Windows.Input.ICommand CancelRebuildCommand => _controller.CancelRebuildCommand;
+        public System.Windows.Input.ICommand RefreshCurrentGameCommand => _controller.RefreshCurrentGameCommand;
+        public System.Windows.Input.ICommand QuickScanCommand => _controller.QuickScanCommand;
 
-        private bool _showProgress;
-        public bool ShowProgress
-        {
-            get => _showProgress;
-            set => SetField(ref _showProgress, value);
-        }
+        #endregion
+
+        #region Game Provider Functions
 
         /// <summary>
-        /// Optional provider that returns the current Game.Name for per-game views.
-        /// Null = global view.
+        /// Override this to provide the current game name for filtering
         /// </summary>
         public Func<string> GameNameProvider { get; set; }
+
+        /// <summary>
+        /// Override this to provide the current game ID for filtering
+        /// </summary>
         public Func<Guid?> GameIdProvider { get; set; }
 
-        public ICommand TriggerRebuildCommand { get; }
-        public ICommand TriggerIncrementalScanCommand { get; }
-        public ICommand RefreshCommand { get; }
-        public ICommand CancelRebuildCommand { get; }
-
-        // MUST be assignable because initialized in InitializePerGame()
-        public ICommand RefreshCurrentGameCommand { get; private set; }
-        public ICommand QuickScanCommand { get; private set; }
-
         protected virtual string GetGameNameForFilter() => GameNameProvider?.Invoke();
+        protected virtual Guid? GetGameIdForFilter() => GameIdProvider?.Invoke();
 
-        private readonly FeedEntryFilter _filter = new FeedEntryFilter();
+        #endregion
 
-        // Snapshot from cache (friend-only)
-        private List<FeedEntry> _rawCachedEntries = new List<FeedEntry>();
+        #region Settings Change Handler
 
-        private readonly FeedEntryFactory _entryFactory = new FeedEntryFactory();
-        private FeedEntryHydrator _hydrator;
-
-        public ObservableCollection<FeedEntry> AllEntries { get; } = new ObservableCollection<FeedEntry>();
-        public ICollectionView EntriesView { get; private set; }
-        public ObservableCollection<FeedGroup> GroupedEntries { get; } = new ObservableCollection<FeedGroup>();
-        public bool HasAnyEntries => GroupedEntries?.Any() == true;
-
-        public ObservableCollection<string> FriendFilters { get; } = new ObservableCollection<string>();
-        public ObservableCollection<string> GameFilters { get; } = new ObservableCollection<string>();
-
-        private string _cacheLastUpdatedText = "";
-        public string CacheLastUpdatedText
+        private void OnSettingsPropertyChanged(object sender, PropertyChangedEventArgs e)
         {
-            get => _cacheLastUpdatedText;
-            set => SetField(ref _cacheLastUpdatedText, value);
-        }
-
-        private string _friendSearchText = "";
-        public string FriendSearchText
-        {
-            get => _friendSearchText;
-            set
+            switch (e.PropertyName)
             {
-                if (!SetField(ref _friendSearchText, value)) return;
-                _filter.FriendSearchText = value ?? "";
-                QueueRefreshView();
+                case nameof(_settings.FriendAvatarSize):
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FriendAvatarSize)));
+                    break;
+
+                case nameof(_settings.AchievementIconSize):
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AchievementIconSize)));
+                    break;
+
+                case nameof(_settings.IncludeSelfUnlockTime):
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowSelfUnlockTime)));
+                    break;
+
+                case nameof(_settings.HideAchievementsLockedForSelf):
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HideAchievementsLockedForSelf)));
+                    
+                    // When this setting changes, reapply it to all entries
+                    ApplyHideLockedSettingToViewEntries();
+                    _viewModel.RefreshView();
+                    break;
             }
-        }
-
-        private string _gameSearchText = "";
-        public string GameSearchText
-        {
-            get => _gameSearchText;
-            set
-            {
-                if (!SetField(ref _gameSearchText, value)) return;
-                _filter.GameSearchText = value ?? "";
-                QueueRefreshView();
-            }
-        }
-
-        private string _achievementSearchText = "";
-        public string AchievementSearchText
-        {
-            get => _achievementSearchText;
-            set
-            {
-                if (!SetField(ref _achievementSearchText, value)) return;
-                _filter.AchievementSearchText = value ?? "";
-                QueueRefreshView();
-            }
-        }
-
-        // ---- Incremental scan controls (UI-bindable) ----
-
-        private int _incrementalRecentFriendsCount = 5;
-        public int IncrementalRecentFriendsCount
-        {
-            get => _incrementalRecentFriendsCount;
-            set
-            {
-                var v = Math.Max(0, value);
-                if (!SetField(ref _incrementalRecentFriendsCount, v)) return;
-                NotifyCommandsChanged();
-            }
-        }
-
-        private int _incrementalRecentGamesPerFriend = 5;
-        public int IncrementalRecentGamesPerFriend
-        {
-            get => _incrementalRecentGamesPerFriend;
-            set
-            {
-                var v = Math.Max(0, value);
-                if (!SetField(ref _incrementalRecentGamesPerFriend, v)) return;
-                NotifyCommandsChanged();
-            }
-        }
-
-        // Debounce token for filter refresh
-        private CancellationTokenSource _filterCts;
-
-        // Debounce token for cache reload (cache changed events can burst)
-        private CancellationTokenSource _cacheReloadCts;
-
-        // Debounce token for re-applying the current raw list (MaxFeedItems changes, etc.)
-        private CancellationTokenSource _reapplyCts;
-
-
-
-        // Track only entries that have been temporarily revealed
-        private readonly HashSet<string> _revealedEntryIds = new HashSet<string>(StringComparer.Ordinal);
-        private readonly object _revealedLock = new object();
-
-        // Fast lookup for reveal reset without scanning AllEntries
-        private readonly Dictionary<string, FeedEntry> _entryById = new Dictionary<string, FeedEntry>(StringComparer.Ordinal);
-
-        // Batch populate to avoid UI freeze on big lists
-        private const int PopulateBatchSize = 250;
-        private int _populateGeneration = 0;
-
-        // ---- Centralized auth state (delegated to helper) ----
-        public bool SteamReady => _authValidator.IsSteamReady;
-        public string SteamAuthMessage => _authValidator.AuthMessage;
-
-        public FeedControlLogic(
-            IPlayniteAPI api,
-            FriendsAchievementFeedSettings settings,
-            ILogger logger,
-            AchievementFeedService feedService)
-        {
-            _api = api;
-            _settings = settings;
-            _logger = logger;
-            _feedService = feedService;
-
-            _authValidator = new SteamAuthValidator(settings, feedService);
-            _authValidator.AuthStateChanged += (s, e) => UpdateAuthBindings();
-
-            _progressHandler = new RebuildProgressHandler(feedService, logger);
-            _progressHandler.ProgressUpdated += OnProgressUpdate;
-
-            SyncIncrementalScanDefaults();
-
-            InitializeView(); // collections, hydrator, view wiring
-
-            _feedService.CacheChanged += FeedService_CacheChanged;
-
-            _triggerRebuildCmd = new AsyncCommand(async _ =>
-            {
-                await TriggerRebuild(null, default).ConfigureAwait(false);
-            }, _ => !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady);
-
-            _triggerIncrementalScanCmd = new AsyncCommand(async _ =>
-            {
-                await TriggerIncrementalScanAsync(default).ConfigureAwait(false);
-            }, _ => !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady);
-
-            // Refresh stays allowed even without Steam configured (it can load cache),
-            // but will block rebuild paths via EnsureSteamReadyAsync.
-            _refreshCmd = new AsyncCommand(
-                async _ => await RefreshAsync(default).ConfigureAwait(false),
-                _ => !IsLoading);
-
-            _cancelRebuildCmd = new AsyncCommand(async _ =>
-            {
-                CancelRebuild();
-                await Task.CompletedTask;
-            }, _ => _feedService.IsRebuilding);
-
-            TriggerRebuildCommand = _triggerRebuildCmd;
-            TriggerIncrementalScanCommand = _triggerIncrementalScanCmd;
-            RefreshCommand = _refreshCmd;
-            CancelRebuildCommand = _cancelRebuildCmd;
-
-            InitializePerGame();   // per-game command wiring
-            InitializeQuickScan(); // wire quick-scan command
-
-            HookSettingsChanges();
-            _authValidator.QueueValidation();
-            TryInitializeFromServiceState();
-        }
-
-        private static DateTime AsLocalFromUtc(DateTime dt)
-        {
-            if (dt.Kind == DateTimeKind.Local) return dt;
-            if (dt.Kind == DateTimeKind.Utc) return dt.ToLocalTime();
-            return DateTime.SpecifyKind(dt, DateTimeKind.Utc).ToLocalTime();
-        }
-
-        public void NotifyCommandsChanged()
-        {
-            _triggerRebuildCmd?.RaiseCanExecuteChanged();
-            _triggerIncrementalScanCmd?.RaiseCanExecuteChanged();
-            _refreshCmd?.RaiseCanExecuteChanged();
-            _cancelRebuildCmd?.RaiseCanExecuteChanged();
-            RaisePerGameCanExecuteChanged();
-            RaiseQuickScanCanExecuteChanged();
-        }
-
-        private void HookSettingsChanges()
-        {
-            if (_settings == null) return;
-
-            _settings.PropertyChanged += (s, e) =>
-            {
-                switch (e.PropertyName)
-                {
-                    case nameof(_settings.FriendAvatarSize):
-                        OnPropertyChanged(nameof(FriendAvatarSize));
-                        break;
-
-                    case nameof(_settings.AchievementIconSize):
-                        OnPropertyChanged(nameof(AchievementIconSize));
-                        break;
-
-                    case nameof(_settings.IncludeSelfUnlockTime):
-                        OnPropertyChanged(nameof(ShowSelfUnlockTime));
-                        QueueRefreshView();
-                        break;
-
-                    case nameof(_settings.HideAchievementsLockedForSelf):
-                        OnPropertyChanged(nameof(HideAchievementsLockedForSelf));
-
-                        RunOnUi(() =>
-                        {
-                            ApplyHideLockedSettingToViewEntries();
-                            ResetAllRevealsFast();
-                            RefreshViewAndGroups();
-                        });
-
-                        break;
-
-                    case nameof(_settings.MaxFeedItems):
-                        QueueReapplyFromRaw();
-                        break;
-
-                    case nameof(_settings.SteamUserId):
-                    case nameof(_settings.SteamApiKey):
-                        _authValidator.QueueValidation();
-                        break;
-
-                    case nameof(_settings.QuickScanRecentFriendsCount):
-                        IncrementalRecentFriendsCount = _settings.QuickScanRecentFriendsCount;
-                        break;
-
-                    case nameof(_settings.QuickScanRecentGamesPerFriend):
-                        IncrementalRecentGamesPerFriend = _settings.QuickScanRecentGamesPerFriend;
-                        break;
-                }
-            };
-        }
-
-        private void SyncIncrementalScanDefaults()
-        {
-            if (_settings == null) return;
-
-            IncrementalRecentFriendsCount = Math.Max(0, _settings.QuickScanRecentFriendsCount);
-            IncrementalRecentGamesPerFriend = Math.Max(0, _settings.QuickScanRecentGamesPerFriend);
-        }
-
-
-
-        private void RunOnUi(Action action)
-        {
-            var disp = Application.Current?.Dispatcher;
-            if (disp != null)
-                disp.InvokeIfNeeded(action);
-        }
-
-        private void UpdateAuthBindings()
-        {
-            RunOnUi(() =>
-            {
-                OnPropertyChanged(nameof(SteamReady));
-                OnPropertyChanged(nameof(SteamAuthMessage));
-                UpdateStatusCount();
-                NotifyCommandsChanged();
-            });
-        }
-
-        private void InitializeView()
-        {
-            _hydrator = new FeedEntryHydrator(_feedService.Cache, _entryFactory);
-
-            EntriesView = CollectionViewSource.GetDefaultView(AllEntries);
-            EntriesView.Filter = o => _filter.Matches(o as FeedEntry);
-
-            GroupedEntries.CollectionChanged += (s, e) =>
-            {
-                OnPropertyChanged(nameof(HasAnyEntries));
-            };
         }
 
         private void ApplyHideLockedSettingToViewEntries()
         {
             var hideLocked = HideAchievementsLockedForSelf;
-
-            foreach (var e in AllEntries)
+            
+            foreach (var entry in _viewModel.AllEntries)
             {
-                if (e != null)
+                if (entry != null)
                 {
-                    e.HideAchievementsLockedForSelf = hideLocked;
+                    entry.HideAchievementsLockedForSelf = hideLocked;
                 }
             }
         }
 
-        private void QueueReapplyFromRaw()
+        #endregion
+
+        #region Public Methods
+
+        public void UpdateCacheData(System.Collections.Generic.List<FriendsAchievementFeed.Models.FeedEntry> entries)
         {
-            _reapplyCts?.Cancel();
-            _reapplyCts?.Dispose();
-            _reapplyCts = new CancellationTokenSource();
-            var token = _reapplyCts.Token;
-
-            Task.Run(async () =>
-            {
-                try
-                {
-                    await Task.Delay(50, token).ConfigureAwait(false);
-                    token.ThrowIfCancellationRequested();
-
-                    var rawFriend = _rawCachedEntries ?? new List<FeedEntry>();
-
-                    var hydrated = _hydrator.HydrateForUi(rawFriend, token) ?? new List<FeedEntry>();
-                    hydrated = hydrated
-                        .Where(e => e != null)
-                        .OrderByDescending(e => e.FriendUnlockTime)
-                        .ThenByDescending(e => e.Id, StringComparer.Ordinal)
-                        .ToList();
-
-                    await ApplyEntriesToUiAsync(hydrated, fromRebuild: false, token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex)
-                {
-                    _logger?.Error(ex, "Error re-applying view entries.");
-                }
-            });
+            _viewModel.UpdateCacheData(entries);
         }
 
-        private async Task ReloadFromCacheToUiAsync(bool fromRebuild, CancellationToken token)
+        public void ResetAllReveals()
         {
-            var gameName = GetGameNameForFilter();
-
-            var hydrated = await Task.Run(() =>
-            {
-                token.ThrowIfCancellationRequested();
-
-                var rawFriend = LoadRawFriendEntriesFromCache(gameName);
-                _rawCachedEntries = rawFriend ?? new List<FeedEntry>();
-
-                token.ThrowIfCancellationRequested();
-
-                var list = _hydrator.HydrateForUi(_rawCachedEntries, token) ?? new List<FeedEntry>();
-                list = list
-                    .Where(e => e != null)
-                    .OrderByDescending(e => e.FriendUnlockTime)
-                    .ThenByDescending(e => e.Id, StringComparer.Ordinal)
-                    .ToList();
-
-                return list;
-            }, token).ConfigureAwait(false);
-
-            await ApplyEntriesToUiAsync(hydrated, fromRebuild, token).ConfigureAwait(false);
-        }
-
-        private async Task ApplyEntriesToUiAsync(List<FeedEntry> entries, bool fromRebuild, CancellationToken token)
-        {
-            entries ??= new List<FeedEntry>();
-
-            var viewEntries = DecorateForView(entries);
-
-            var gen = Interlocked.Increment(ref _populateGeneration);
-            var maxItems = (_settings?.MaxFeedItems > 0) ? _settings.MaxFeedItems : 25;
-
-            _filter.DefaultVisibleIds = (viewEntries.Count > maxItems)
-                ? new HashSet<string>(
-                    viewEntries.Take(maxItems)
-                        .Select(x => x?.Id)
-                        .Where(id => !string.IsNullOrEmpty(id)),
-                    StringComparer.Ordinal)
-                : null;
-
-            await Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                ResetAllRevealsFast();
-
-                AllEntries.Clear();
-                _entryById.Clear();
-
-                BeginBatchPopulate(gen, viewEntries, fromRebuild);
-            }), DispatcherPriority.Background);
-        }
-
-        private void BeginBatchPopulate(int gen, List<FeedEntry> entries, bool fromRebuild)
-        {
-            int index = 0;
-
-            Action addBatch = null;
-            addBatch = () =>
-            {
-                if (gen != _populateGeneration) return;
-
-                var end = Math.Min(entries.Count, index + PopulateBatchSize);
-
-                for (; index < end; index++)
-                {
-                    var e = entries[index];
-                    AllEntries.Add(e);
-
-                    if (!string.IsNullOrEmpty(e?.Id))
-                    {
-                        _entryById[e.Id] = e;
-                    }
-                }
-
-                if (index < entries.Count)
-                {
-                    Application.Current.Dispatcher.BeginInvoke(addBatch, DispatcherPriority.Background);
-                    return;
-                }
-
-                ApplyHideLockedSettingToViewEntries();
-                RebuildFilterLists();
-                RefreshViewAndGroups();
-
-                var updated = _feedService.Cache.GetFriendFeedLastUpdatedUtc();
-                CacheLastUpdatedText = updated?.ToLocalTime().ToString("g")
-                    ?? ResourceProvider.GetString("LOCFriendsAchFeed_Status_Never");
-
-                UpdateStatusCount();
-            };
-
-            addBatch();
-        }
-
-        private List<FeedEntry> DecorateForView(List<FeedEntry> raw)
-        {
-            raw ??= new List<FeedEntry>();
-            var hideLocked = _settings?.HideAchievementsLockedForSelf ?? false;
-
-            var list = new List<FeedEntry>(raw.Count);
-
-            foreach (var src in raw)
-            {
-                if (src == null) continue;
-
-                var e = CloneForView(src);
-
-                if (e.SelfUnlockTime.HasValue && e.SelfUnlockTime.Value <= DateTime.MinValue.AddSeconds(1))
-                {
-                    e.SelfUnlockTime = null;
-                }
-
-                e.HideAchievementsLockedForSelf = hideLocked;
-
-                var myUnlocked = e.SelfUnlockTime.HasValue;
-                e.IsRevealed = !hideLocked || myUnlocked;
-
-                list.Add(e);
-            }
-
-            return list;
-        }
-
-        private static FeedEntry CloneForView(FeedEntry src)
-        {
-            return new FeedEntry
-            {
-                Id = src.Id,
-                FriendSteamId = src.FriendSteamId,
-                FriendPersonaName = src.FriendPersonaName,
-                FriendAvatarUrl = src.FriendAvatarUrl,
-
-                GameName = src.GameName,
-                PlayniteGameId = src.PlayniteGameId,
-                AppId = src.AppId,
-
-                AchievementApiName = src.AchievementApiName,
-                AchievementDisplayName = src.AchievementDisplayName,
-                AchievementDescription = src.AchievementDescription,
-
-                FriendUnlockTime = src.FriendUnlockTime,
-
-                SelfAchievementIcon = src.SelfAchievementIcon,
-                FriendAchievementIcon = src.FriendAchievementIcon,
-
-                SelfUnlockTime = src.SelfUnlockTime,
-
-                IsRevealed = src.IsRevealed
-            };
-        }
-
-        private void ResetAllRevealsFast()
-        {
-            HashSet<string> ids;
-            lock (_revealedLock)
-            {
-                if (_revealedEntryIds.Count == 0) return;
-                ids = new HashSet<string>(_revealedEntryIds, StringComparer.Ordinal);
-                _revealedEntryIds.Clear();
-            }
-
-            foreach (var id in ids)
-            {
-                if (string.IsNullOrEmpty(id)) continue;
-
-                if (_entryById.TryGetValue(id, out var e) && e != null)
-                {
-                    e.IsRevealed = false;
-                }
-            }
-        }
-
-        public void RegisterReveal(string id)
-        {
-            if (string.IsNullOrEmpty(id)) return;
-            lock (_revealedLock) { _revealedEntryIds.Add(id); }
-        }
-
-        public void UnregisterReveal(string id)
-        {
-            if (string.IsNullOrEmpty(id)) return;
-            lock (_revealedLock) { _revealedEntryIds.Remove(id); }
+            _viewModel.ResetAllReveals();
         }
 
         public void ToggleReveal(FeedEntry entry)
         {
-            if (entry == null) return;
-            if (!entry.CanReveal) return;
-
-            entry.IsRevealed = !entry.IsRevealed;
-
-            if (!string.IsNullOrEmpty(entry.Id))
-            {
-                if (entry.IsRevealed) RegisterReveal(entry.Id);
-                else UnregisterReveal(entry.Id);
-            }
+            // Delegate to view model
+            _viewModel.ToggleReveal(entry);
         }
 
-        private void QueueRefreshView()
+        public async Task RefreshAsync()
         {
-            _filterCts?.Cancel();
-            _filterCts?.Dispose();
-            _filterCts = new CancellationTokenSource();
-            var token = _filterCts.Token;
-
-            Task.Run(async () =>
-            {
-                try
-                {
-                    await Task.Delay(50, token).ConfigureAwait(false);
-                    token.ThrowIfCancellationRequested();
-
-                    await Application.Current.Dispatcher.BeginInvoke(new Action(RefreshViewAndGroups), DispatcherPriority.Background);
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex)
-                {
-                    _logger?.Error(ex, "Error refreshing filtered view.");
-                }
-            });
+            // Delegate to controller
+            await _controller.RefreshFeedAsync(default);
         }
 
-        private void RefreshViewAndGroups()
+        public void NotifyCommandsChanged()
         {
-            EntriesView.Refresh();
-            RebuildGroupsFromView();
-            UpdateStatusCount();
+            // Delegate to controller 
+            _controller.NotifyCommandsChanged();
         }
 
-        private void RebuildGroupsFromView()
-        {
-            GroupedEntries.Clear();
-
-            var showGameInHeader = GameNameProvider == null;
-            var filteredEntries = EntriesView.Cast<object>()
-                                            .OfType<FeedEntry>()
-                                            .ToList();
-
-            var groups = FeedGroupingBuilder.BuildGroups(filteredEntries, showGameInHeader, AsLocalFromUtc);
-            foreach (var g in groups)
-            {
-                GroupedEntries.Add(g);
-            }
-        }
-
-        private void UpdateStatusCount()
-        {
-            try
-            {
-                if (_feedService != null && _feedService.IsRebuilding)
-                {
-                    return;
-                }
-
-                // If Steam settings are not configured, show an explicit message.
-                if (!_authValidator.IsSteamKeyConfigured)
-                {
-                    StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
-                    return;
-                }
-
-                // If we performed an auth check and it's invalid, show that message.
-                if (!_authValidator.IsSteamAuthValid)
-                {
-                    StatusMessage = !string.IsNullOrWhiteSpace(_authValidator.AuthMessage)
-                        ? _authValidator.AuthMessage
-                        : ResourceProvider.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured");
-                    return;
-                }
-
-                var count = EntriesView?.Cast<object>().Count() ?? 0;
-                StatusMessage = string.Format(ResourceProvider.GetString("LOCFriendsAchFeed_Status_Entries"), count);
-            }
-            catch
-            {
-                // swallow
-            }
-        }
-
-        private void RebuildFilterLists()
-        {
-            var entries = AllEntries.ToList();
-
-            FriendFilters.Clear();
-            foreach (var f in BuildFriendFilterList(entries))
-            {
-                FriendFilters.Add(f);
-            }
-
-            GameFilters.Clear();
-            foreach (var g in BuildGameFilterList(entries))
-            {
-                GameFilters.Add(g);
-            }
-        }
-
-        private List<FeedEntry> LoadRawFriendEntriesFromCache(string gameName = null)
-        {
-            var all = _feedService.Cache.GetCachedFriendEntries();
-            if (all == null || all.Count == 0)
-            {
-                return new List<FeedEntry>();
-            }
-
-            if (string.IsNullOrWhiteSpace(gameName))
-            {
-                return all.OrderByDescending(e => e.FriendUnlockTimeUtc).ToList();
-            }
-
-            return all
-                .Where(e => string.Equals(e.GameName, gameName, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(e => e.FriendUnlockTimeUtc)
-                .ToList();
-        }
-
-        private static List<string> BuildFriendFilterList(IEnumerable<FeedEntry> entries)
-        {
-            return entries?
-                    .Select(e => e.FriendPersonaName)
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(n => n)
-                    .ToList()
-                ?? new List<string>();
-        }
-
-        private static List<string> BuildGameFilterList(IEnumerable<FeedEntry> entries)
-        {
-            return entries?
-                    .Select(e => e.GameName)
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(n => n)
-                    .ToList()
-                ?? new List<string>();
-        }
-
-        private void TryInitializeFromServiceState()
-        {
-            try
-            {
-                var last = _feedService.GetLastRebuildProgress();
-                var lastStatus = _feedService.GetLastRebuildStatus();
-
-                if (_feedService.IsRebuilding)
-                {
-                    RunOnUi(() =>
-                    {
-                        ProgressPercent = last?.PercentComplete ?? 0;
-                        StatusMessage = StatusMessageResolver.GetEffectiveMessage(last, lastStatus);
-                        ShowProgress = true;
-                        IsLoading = true;
-                        NotifyCommandsChanged();
-                    });
-                }
-                else if (!string.IsNullOrWhiteSpace(lastStatus))
-                {
-                    if (_feedService.IsCacheValid())
-                    {
-                        _ = ReloadFromCacheToUiAsync(fromRebuild: false, CancellationToken.None);
-                    }
-                    else
-                    {
-                        RunOnUi(() =>
-                        {
-                            StatusMessage = lastStatus;
-                            ShowProgress = false;
-                        });
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error initializing FeedControlLogic.");
-            }
-        }
-
-        private async void FeedService_CacheChanged(object sender, EventArgs e)
-        {
-            _cacheReloadCts?.Cancel();
-            _cacheReloadCts?.Dispose();
-            _cacheReloadCts = new CancellationTokenSource();
-            var token = _cacheReloadCts.Token;
-
-            try
-            {
-                await Task.Delay(75, token).ConfigureAwait(false);
-                token.ThrowIfCancellationRequested();
-
-                await ReloadFromCacheToUiAsync(fromRebuild: false, token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, ResourceProvider.GetString("LOCFriendsAchFeed_Error_RefreshFeedAfterCacheChange"));
-            }
-        }
-
-        // ---- Auth gating helpers (block progress + alert user) ----
-
-        private void ShowAuthDialogOnce(string message)
-        {
-            var now = DateTime.UtcNow;
-            if ((now - _lastAuthDialogUtc) < AuthDialogCooldown) return;
-            _lastAuthDialogUtc = now;
-
-            RunOnUi(() =>
-            {
-                try
-                {
-                    _api?.Dialogs?.ShowErrorMessage(message, ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"));
-                }
-                catch (Exception ex1)
-                {
-                    // last resort fallback
-                    _logger?.Debug(ex1, "[FAF] Failed to show error dialog via API, trying MessageBox.");
-                    try { MessageBox.Show(message, ResourceProvider.GetString("LOCFriendsAchFeed_Title_PluginName"), MessageBoxButton.OK, MessageBoxImage.Error); }
-                    catch (Exception ex2)
-                    {
-                        _logger?.Error(ex2, "[FAF] Failed to show error message via both API and MessageBox.");
-                    }
-                }
-            });
-        }
-
-        private async Task<bool> EnsureSteamReadyAsync(bool showDialog, CancellationToken token)
-        {
-            return await _authValidator.EnsureReadyAsync(showDialog, ShowAuthDialogOnce, token).ConfigureAwait(false);
-        }
-
-        public async Task RefreshAsync(CancellationToken token = default)
-        {
-            RunOnUi(() => IsLoading = true);
-            await Task.Yield();
-
-            try
-            {
-                _feedService.Cache.EnsureDiskCacheOrClearMemory();
-
-                if (_feedService.IsCacheValid())
-                {
-                    RunOnUi(() =>
-                    {
-                        StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_LoadingFromCache") ?? "Loading…";
-                    });
-
-                    await ReloadFromCacheToUiAsync(fromRebuild: false, token).ConfigureAwait(false);
-                }
-                else
-                {
-                    // Cache invalid: must be Steam-ready to rebuild
-                    if (!await EnsureSteamReadyAsync(showDialog: true, token).ConfigureAwait(false))
-                    {
-                        // keep UI consistent
-                        RunOnUi(() =>
-                        {
-                            ShowProgress = false;
-                            ProgressPercent = 0;
-                        });
-                        return;
-                    }
-
-                    RunOnUi(() =>
-                    {
-                        StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Status_NoCache_Building") ?? "Building cache…";
-                    });
-
-                    await TriggerRebuild(null, token).ConfigureAwait(false);
-                }
-            }
-            catch (Exception e)
-            {
-                _logger.Error(e, "Failed to refresh feed.");
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedLoadFeed"));
-            }
-            finally
-            {
-                RunOnUi(() => IsLoading = false);
-            }
-        }
-
-        public async Task TriggerRebuild(CacheRebuildOptions options = null, CancellationToken externalToken = default)
-        {
-            // Block progress if Steam API key or Steam web auth cookies are not set/valid.
-            if (!await EnsureSteamReadyAsync(showDialog: true, externalToken).ConfigureAwait(false))
-            {
-                RunOnUi(() =>
-                {
-                    IsLoading = false;
-                    ShowProgress = false;
-                    ProgressPercent = 0;
-                    NotifyCommandsChanged();
-                });
-                return;
-            }
-
-            CancellationTokenRegistration extReg = default;
-            var hasReg = false;
-
-            if (_feedService.IsRebuilding)
-            {
-                var last = _feedService.GetLastRebuildProgress();
-                var lastStatus = _feedService.GetLastRebuildStatus();
-
-                RunOnUi(() =>
-                {
-                    ProgressPercent = last?.PercentComplete ?? 0;
-                    StatusMessage = !string.IsNullOrWhiteSpace(last?.Message) ? last.Message : (lastStatus ?? string.Empty);
-                    ShowProgress = true;
-                    IsLoading = true;
-                    NotifyCommandsChanged();
-                });
-
-                return;
-            }
-
-            RunOnUi(() =>
-            {
-                IsLoading = true;
-                ShowProgress = true;
-                ProgressPercent = 0;
-                StatusMessage = string.Empty;
-                NotifyCommandsChanged();
-            });
-
-            await Task.Yield();
-
-            try
-            {
-                if (externalToken != default)
-                {
-                    extReg = externalToken.Register(() => _feedService.CancelActiveRebuild());
-                    hasReg = true;
-                }
-
-                await _feedService.StartManagedRebuildAsync(options).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled"));
-                _logger?.Debug(ResourceProvider.GetString("LOCFriendsAchFeed_Debug_RebuildCanceledByUser"));
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Failed to run managed rebuild.");
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedRebuild"));
-            }
-            finally
-            {
-                if (hasReg) extReg.Dispose();
-
-                RunOnUi(() =>
-                {
-                    var rebuilding = _feedService?.IsRebuilding ?? false;
-                    IsLoading = rebuilding;
-                    ShowProgress = rebuilding;
-                    NotifyCommandsChanged();
-                });
-            }
-        }
-
-        // ---- Incremental scan trigger (new) ----
-
-        private async Task TriggerIncrementalScanAsync(CancellationToken externalToken = default)
-        {
-            // Block progress if Steam API key or Steam web auth cookies are not set/valid.
-            if (!await EnsureSteamReadyAsync(showDialog: true, externalToken).ConfigureAwait(false))
-            {
-                RunOnUi(() =>
-                {
-                    IsLoading = false;
-                    ShowProgress = false;
-                    ProgressPercent = 0;
-                    NotifyCommandsChanged();
-                });
-                return;
-            }
-
-            CancellationTokenRegistration extReg = default;
-            var hasReg = false;
-
-            if (_feedService.IsRebuilding)
-            {
-                var last = _feedService.GetLastRebuildProgress();
-                var lastStatus = _feedService.GetLastRebuildStatus();
-
-                RunOnUi(() =>
-                {
-                    ProgressPercent = last?.PercentComplete ?? 0;
-                    StatusMessage = !string.IsNullOrWhiteSpace(last?.Message) ? last.Message : (lastStatus ?? string.Empty);
-                    ShowProgress = true;
-                    IsLoading = true;
-                    NotifyCommandsChanged();
-                });
-
-                return;
-            }
-
-            RunOnUi(() =>
-            {
-                IsLoading = true;
-                ShowProgress = true;
-                ProgressPercent = 0;
-                StatusMessage = string.Empty;
-                NotifyCommandsChanged();
-            });
-
-            await Task.Yield();
-
-            try
-            {
-                if (externalToken != default)
-                {
-                    extReg = externalToken.Register(() => _feedService.CancelActiveRebuild());
-                    hasReg = true;
-                }
-
-                var friends = Math.Max(0, IncrementalRecentFriendsCount);
-                var games = Math.Max(0, IncrementalRecentGamesPerFriend);
-
-                await _feedService.StartManagedIncrementalScanAsync(friends, games).ConfigureAwait(false);
-
-                // Ensure we reflect results immediately even if cache-change events are delayed/debounced.
-                await ReloadFromCacheToUiAsync(fromRebuild: false, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled"));
-                _logger?.Debug(ResourceProvider.GetString("LOCFriendsAchFeed_Debug_RebuildCanceledByUser"));
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "[FAF] Incremental scan failed.");
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedRebuild"));
-            }
-            finally
-            {
-                if (hasReg) extReg.Dispose();
-
-                RunOnUi(() =>
-                {
-                    var rebuilding = _feedService?.IsRebuilding ?? false;
-                    IsLoading = rebuilding;
-                    ShowProgress = rebuilding;
-                    NotifyCommandsChanged();
-                });
-            }
-        }
-
-        public void CancelRebuild()
-        {
-            try
-            {
-                _progressHandler?.CancelRebuild();
-                StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled");
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error cancelling rebuild.");
-            }
-            finally
-            {
-                ShowProgress = false;
-                ProgressPercent = 0;
-                NotifyCommandsChanged();
-            }
-        }
-
-        private void OnProgressUpdate(object sender, ProgressUpdateEventArgs e)
-        {
-            ProgressPercent = e.Percent;
-            StatusMessage = e.Message;
-            ShowProgress = e.IsRebuilding;
-            IsLoading = e.IsRebuilding;
-            NotifyCommandsChanged();
-        }
-
-        // ---- Per-game operation (moved here only for organization) ----
-
-        private bool CanTriggerSingleGameScan()
-        {
-            var id = GameIdProvider?.Invoke();
-            if (!id.HasValue || id.Value == Guid.Empty)
-                return false;
-
-            return !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady;
-        }
-
-        private bool CanTriggerQuickScan()
-        {
-            return !IsLoading && !_feedService.IsRebuilding && _authValidator.IsSteamReady;
-        }
-
-        private async Task TriggerSingleGameScanAsync(CancellationToken externalToken = default)
-        {
-            // Block progress if Steam API key or Steam web auth cookies are not set/valid.
-            if (!await EnsureSteamReadyAsync(showDialog: true, externalToken).ConfigureAwait(false))
-            {
-                RunOnUi(() =>
-                {
-                    IsLoading = false;
-                    ShowProgress = false;
-                    ProgressPercent = 0;
-                    NotifyCommandsChanged();
-                });
-                return;
-            }
-
-            CancellationTokenRegistration extReg = default;
-            var hasReg = false;
-
-            var id = GameIdProvider?.Invoke();
-            if (!id.HasValue || id.Value == Guid.Empty)
-                return;
-
-            if (_feedService.IsRebuilding)
-            {
-                var last = _feedService.GetLastRebuildProgress();
-                var lastStatus = _feedService.GetLastRebuildStatus();
-
-                RunOnUi(() =>
-                {
-                    ProgressPercent = last?.PercentComplete ?? 0;
-                    StatusMessage = !string.IsNullOrWhiteSpace(last?.Message) ? last.Message : (lastStatus ?? string.Empty);
-                    ShowProgress = true;
-                    IsLoading = true;
-                    NotifyCommandsChanged();
-                });
-
-                return;
-            }
-
-            RunOnUi(() =>
-            {
-                IsLoading = true;
-                ShowProgress = true;
-                ProgressPercent = 0;
-                StatusMessage = string.Empty;
-                NotifyCommandsChanged();
-            });
-
-            await Task.Yield();
-
-            try
-            {
-                if (externalToken != default)
-                {
-                    extReg = externalToken.Register(() => _feedService.CancelActiveRebuild());
-                    hasReg = true;
-                }
-
-                await _feedService.StartManagedSingleGameScanAsync(id.Value).ConfigureAwait(false);
-
-                // One refresh pass is enough (your previous code did it twice).
-                await ReloadFromCacheToUiAsync(fromRebuild: false, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Rebuild_Canceled"));
-                _logger?.Debug(ResourceProvider.GetString("LOCFriendsAchFeed_Debug_RebuildCanceledByUser"));
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "[FAF] Single-game scan failed.");
-                RunOnUi(() => StatusMessage = ResourceProvider.GetString("LOCFriendsAchFeed_Error_FailedRebuild"));
-            }
-            finally
-            {
-                if (hasReg) extReg.Dispose();
-
-                RunOnUi(() =>
-                {
-                    var rebuilding = _feedService?.IsRebuilding ?? false;
-                    IsLoading = rebuilding;
-                    ShowProgress = rebuilding;
-                    NotifyCommandsChanged();
-                });
-            }
-        }
-
-        // per-game command wiring
-        private void InitializePerGame()
-        {
-            _singleGameScanCmd = new AsyncCommand(
-                async _ => await TriggerSingleGameScanAsync(default).ConfigureAwait(false),
-                _ => CanTriggerSingleGameScan());
-
-            RefreshCurrentGameCommand = _singleGameScanCmd;
-        }
-
-        private void InitializeQuickScan()
-        {
-            _quickScanCmd = new AsyncCommand(
-                async _ => await TriggerIncrementalScanAsync(default).ConfigureAwait(false),
-                _ => CanTriggerQuickScan());
-
-            QuickScanCommand = _quickScanCmd;
-        }
-
-        private void RaisePerGameCanExecuteChanged()
-        {
-            _singleGameScanCmd?.RaiseCanExecuteChanged();
-        }
-
-        private void RaiseQuickScanCanExecuteChanged()
-        {
-            _quickScanCmd?.RaiseCanExecuteChanged();
-        }
+        #endregion
 
         public void Dispose()
         {
             try
             {
-                var disp = Application.Current?.Dispatcher;
-                if (disp != null)
-                {
-                    if (disp.CheckAccess()) ResetAllRevealsFast();
-                    else disp.Invoke(new Action(ResetAllRevealsFast));
-                }
-                else
-                {
-                    ResetAllRevealsFast();
-                }
+                _controller?.Dispose();
+                _viewModel?.Dispose();
             }
             catch (Exception ex)
             {
-                _logger?.Error(ex, "Error resetting reveals on dispose.");
-            }
-
-            try
-            {
-                _feedService.CacheChanged -= FeedService_CacheChanged;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error unsubscribing from feed service.");
-            }
-
-            try
-            {
-                _authValidator?.Dispose();
-                _progressHandler?.Dispose();
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing helpers.");
-            }
-
-            try
-            {
-                _filterCts?.Cancel();
-                _filterCts?.Dispose();
-                _filterCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing filter cancellation token.");
-            }
-
-            try
-            {
-                _cacheReloadCts?.Cancel();
-                _cacheReloadCts?.Dispose();
-                _cacheReloadCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing cache reload cancellation token.");
-            }
-
-            try
-            {
-                _reapplyCts?.Cancel();
-                _reapplyCts?.Dispose();
-                _reapplyCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing reapply cancellation token.");
+                _logger?.Error(ex, "Error disposing FeedControlLogic");
             }
         }
     }

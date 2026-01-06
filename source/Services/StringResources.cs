@@ -5,16 +5,16 @@ namespace FriendsAchievementFeed.Services
     /// <summary>
     /// Centralized resource string access with fallback support
     /// </summary>
-    internal static class ResourceHelper
+    internal static class StringResources
     {
         public static string GetString(string key, string fallback = null)
         {
-            return ResourceProvider.GetString(key) ?? fallback ?? key;
+            return Playnite.SDK.ResourceProvider.GetString(key) ?? fallback ?? key;
         }
 
         public static string GetStringOrEmpty(string key)
         {
-            return ResourceProvider.GetString(key) ?? string.Empty;
+            return Playnite.SDK.ResourceProvider.GetString(key) ?? string.Empty;
         }
 
         // Common error messages

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using FriendsAchievementFeed.Models;
 
-namespace FriendsAchievementFeed.Views
+namespace FriendsAchievementFeed.Views.Shared
 {
     internal sealed class FeedEntryFilter
     {

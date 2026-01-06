@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 
-namespace FriendsAchievementFeed.Views
+namespace FriendsAchievementFeed.Views.Shared
 {
     public class AsyncCommand : ICommand
     {

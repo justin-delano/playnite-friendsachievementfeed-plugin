@@ -12,7 +12,7 @@ namespace FriendsAchievementFeed.Services
     /// <summary>
     /// Centralizes cache-exposure and debounced settings persistence.
     /// </summary>
-    public class SettingsPersistenceService
+    public class SettingsPersister
     {
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly FriendsAchievementFeedPlugin _plugin;
@@ -23,16 +23,16 @@ namespace FriendsAchievementFeed.Services
         private readonly SemaphoreSlim _settingsSaveGate = new SemaphoreSlim(1, 1);
         private CancellationTokenSource _settingsSaveDebounceCts;
 
-        public SettingsPersistenceService(
+        public SettingsPersister(
             FriendsAchievementFeedSettings settings,
             FriendsAchievementFeedPlugin plugin,
-            ICacheManager cacheService,
+            ICacheManager CacheManager,
             ILogger logger,
             Action<Action> postToUi)
         {
             _settings = settings;
             _plugin = plugin;
-            _cacheService = cacheService;
+            _cacheService = CacheManager;
             _logger = logger;
             _postToUi = postToUi;
         }

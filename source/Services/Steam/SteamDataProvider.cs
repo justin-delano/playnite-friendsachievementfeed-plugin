@@ -1,6 +1,7 @@
 // SteamDataProvider.cs
 
 using FriendsAchievementFeed.Models;
+using FriendsAchievementFeed.Services.Steam.Models;
 using Playnite.SDK;
 using Playnite.SDK.Models;
 using System;
@@ -25,11 +26,11 @@ namespace FriendsAchievementFeed.Services
         private readonly ConcurrentDictionary<string, Task<Dictionary<int, int>>> _ownedGamePlaytimeCache =
             new ConcurrentDictionary<string, Task<Dictionary<int, int>>>(StringComparer.OrdinalIgnoreCase);
 
-        public SteamDataProvider(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin, ICacheService cacheService)
+        public SteamDataProvider(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin, ICacheManager CacheManager)
         {
             _logger = logger;
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
-            _ = cacheService ?? throw new ArgumentNullException(nameof(cacheService)); // currently unused here
+            _ = CacheManager ?? throw new ArgumentNullException(nameof(CacheManager)); // currently unused here
 
             if (api == null) throw new ArgumentNullException(nameof(api));
             _steam = new SteamClient(api, _logger, _plugin.GetPluginUserDataPath());
@@ -45,7 +46,7 @@ namespace FriendsAchievementFeed.Services
             => _steam.RefreshCookiesHeadlessAsync(cancel);
 
         private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct) =>
-            ValidationHelper.IsValidSteamId64(steamIdMaybe)
+            InputValidator.IsValidSteamId64(steamIdMaybe)
                 ? steamIdMaybe.Trim()
                 : (await _steam.GetSelfSteamId64Async(ct).ConfigureAwait(false))?.Trim();
 
@@ -99,7 +100,7 @@ namespace FriendsAchievementFeed.Services
         // ---------------------------------------------------------------------
 
         private static string Loc(string key, string fallback = null) =>
-            ResourceProvider.GetString(key) ?? fallback;
+            StringResources.GetString(key) ?? fallback;
 
         private static (bool IsRateLimited, bool IsEmpty, bool IsLoggedOut) CheckProfilePage(SteamClient.SteamPageResult page)
         {

@@ -127,7 +127,7 @@ namespace FriendsAchievementFeed.Views.Shared
                         : (fe.DataContext is FeedGroup group ? group.FriendSteamId : null);
 
                     if (!string.IsNullOrWhiteSpace(steamId))
-                        GameNavigationHelper.NavigateToFriendProfile(steamId);
+                        GameNavigator.NavigateToFriendProfile(steamId);
 
                     ClearParentListBoxSelection(fe);
                     e.Handled = true;
@@ -148,9 +148,9 @@ namespace FriendsAchievementFeed.Views.Shared
                 if (sender is FrameworkElement fe)
                 {
                     if (fe.DataContext is FeedEntry entry)
-                        GameNavigationHelper.NavigateToGame(entry);
+                        GameNavigator.NavigateToGame(entry);
                     else if (fe.DataContext is FeedGroup group)
-                        GameNavigationHelper.NavigateToGame(group);
+                        GameNavigator.NavigateToGame(group);
 
                     ClearParentListBoxSelection(fe);
                     e.Handled = true;
