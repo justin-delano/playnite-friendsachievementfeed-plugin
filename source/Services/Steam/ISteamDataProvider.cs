@@ -10,7 +10,7 @@ namespace FriendsAchievementFeed.Services
     public interface ISteamDataProvider
     {
         // Cookies
-        Task<bool> RefreshCookiesAsync(CancellationToken cancel);
+        Task<bool> RefreshCookiesAsync(CancellationToken cancel, bool force = false);
 
         // Achievements (HTML scrape)
         Task<List<ScrapedAchievementRow>> GetScrapedAchievementsAsync(

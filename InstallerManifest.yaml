@@ -24,3 +24,9 @@ Packages:
     PackageUrl: https://github.com/justin-delano/playnite-friendsachievementfeed-plugin/releases/download/2.1.0/FriendsAchievementFeed_2_1_0.pext
     Changelog:
       - Release 2.1.0 - Cookie handling improvements and bug fixes
+  - Version: 2.1.1
+    RequiredApiVersion: 6.14.0
+    ReleaseDate: 2026-1-15
+    PackageUrl: https://github.com/justin-delano/playnite-friendsachievementfeed-plugin/releases/download/2.1.1/FriendsAchievementFeed_2_1_1.pext
+    Changelog:
+      - Release 2.1.1 - Finally nailed down cookie issues!

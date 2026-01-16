@@ -1,4 +1,3 @@
-// CacheRebuildService.cs
 using Common;
 using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Services.Steam.Models;
@@ -45,26 +44,14 @@ namespace FriendsAchievementFeed.Services
         public Task<SelfAchievementGameData> EnsureSelfAchievementDataAsync(string playniteGameId, int appId, CancellationToken cancel)
             => _selfAchievementManager.EnsureSelfAchievementDataAsync(playniteGameId, appId, cancel);
 
-        public Task<SelfAchievementGameData> EnsureSelfAchievementDataAsync(
-            string playniteGameId,
-            int appId,
-            CancellationToken cancel,
-            bool forceRefresh)
+        public Task<SelfAchievementGameData> EnsureSelfAchievementDataAsync(string playniteGameId, int appId, CancellationToken cancel, bool forceRefresh)
             => _selfAchievementManager.EnsureSelfAchievementDataAsync(playniteGameId, appId, cancel, forceRefresh);
 
         private void EmitUpdate(Action<RebuildUpdate> onUpdate, RebuildUpdate update)
         {
             if (onUpdate == null || update == null) return;
-
-            try
-            {
-                onUpdate(update);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logger?.Debug(ex, "[FAF] Rebuild progress handler threw.");
-            }
+            try { onUpdate(update); }
+            catch (Exception ex) { _logger?.Debug(ex, "[FAF] Rebuild progress handler threw."); }
         }
 
         // --------------------
@@ -77,11 +64,11 @@ namespace FriendsAchievementFeed.Services
             private readonly int _emitEvery;
             private readonly TimeSpan _min;
             private DateTime _last;
+            private int _currentCounter;
 
-            public int OverallIndex { get; private set; }
             public int OverallCount { get; }
 
-            public Progress(CacheRebuilder svc, Action<RebuildUpdate> cb, int overallCount, int emitEvery = 10, int minMs = 250)
+            public Progress(CacheRebuilder svc, Action<RebuildUpdate> cb, int overallCount, int emitEvery = 5, int minMs = 16)
             {
                 _svc = svc; _cb = cb;
                 OverallCount = Math.Max(0, overallCount);
@@ -91,7 +78,7 @@ namespace FriendsAchievementFeed.Services
 
             public void Step()
             {
-                if (OverallIndex < OverallCount) OverallIndex++;
+                Interlocked.Increment(ref _currentCounter);
             }
 
             public void Emit(RebuildUpdate u, bool force = false, int? i = null, int? total = null)
@@ -99,96 +86,74 @@ namespace FriendsAchievementFeed.Services
                 if (u == null) return;
 
                 var now = DateTime.UtcNow;
-                var ok =
-                    force ||
-                    (i.HasValue && total.HasValue &&
-                        (i.Value == 0 || i.Value == total.Value - 1 ||
-                         ((i.Value + 1) % _emitEvery == 0) ||
-                         (now - _last) >= _min)) ||
-                    (!i.HasValue && (now - _last) >= _min);
+                
+                // Logic to force update on first or last item of a sub-loop
+                bool isBoundary = i.HasValue && total.HasValue && (i.Value == 0 || i.Value >= total.Value - 1);
+                
+                var ok = force || isBoundary || (now - _last) >= _min;
 
                 if (!ok) return;
 
-                _last = now;
-                u.OverallIndex = OverallIndex;
+                lock (this)
+                {
+                    if (!force && !isBoundary && (DateTime.UtcNow - _last) < _min) return;
+                    _last = DateTime.UtcNow;
+                }
+
+                u.OverallIndex = Math.Min(_currentCounter, OverallCount);
                 u.OverallCount = OverallCount;
                 _svc.EmitUpdate(_cb, u);
             }
         }
 
         // --------------------
-        // Helpers: sets/maps
+        // Helpers
         // --------------------
-
-
 
         private List<int> ResolveExplicitAppIds(CacheScanOptions opt, Dictionary<int, Game> steamGamesDict)
         {
             if (opt == null || steamGamesDict == null || steamGamesDict.Count == 0)
                 return null;
 
-            // Preserve insertion-ish order while avoiding duplicates.
-            var seen = new HashSet<int>();
-            var ordered = new List<int>();
+            var result = new HashSet<int>();
 
-            foreach (var id in opt.SteamAppIds ?? Enumerable.Empty<int>())
+            if (opt.SteamAppIds != null)
             {
-                if (id <= 0) continue;
-                if (!steamGamesDict.TryGetValue(id, out _)) continue;
-                if (seen.Add(id)) ordered.Add(id);
+                foreach (var id in opt.SteamAppIds)
+                {
+                    if (id > 0 && steamGamesDict.ContainsKey(id))
+                        result.Add(id);
+                }
             }
 
-            var playniteIds = opt.PlayniteGameIds;
-            if (playniteIds != null && playniteIds.Count > 0)
+            if (opt.PlayniteGameIds != null && opt.PlayniteGameIds.Count > 0)
             {
-                var wanted = new HashSet<Guid>(playniteIds);
-                var dbGames = _api?.Database?.Games;
-
-                if (dbGames != null && wanted.Count > 0)
+                var wantedGuids = new HashSet<Guid>(opt.PlayniteGameIds);
+                foreach (var g in _api.Database.Games)
                 {
-                    foreach (var g in dbGames)
+                    if (wantedGuids.Contains(g.Id))
                     {
-                        if (g == null) continue;
-                        if (!wanted.Contains(g.Id)) continue;
-
-                        if (_steam.TryGetSteamAppId(g, out var appId) && appId > 0 && steamGamesDict.TryGetValue(appId, out _))
+                        if (_steam.TryGetSteamAppId(g, out var appId) && appId > 0 && steamGamesDict.ContainsKey(appId))
                         {
-                            if (seen.Add(appId)) ordered.Add(appId);
+                            result.Add(appId);
                         }
-
-                        wanted.Remove(g.Id);
-                        if (wanted.Count == 0) break;
                     }
                 }
             }
 
-            return ordered.Count == 0 ? null : ordered;
+            return result.Count == 0 ? null : result.ToList();
         }
 
-
-
-
-
-
-
-
-
-
-
-        // --------------------
-        // Friend achievement row analysis
-        // --------------------
         private sealed class FriendRowAnalysis
         {
             public bool SawAnyUnlocked;
-            public List<(FriendsAchievementFeed.Services.Steam.Models.ScrapedAchievementRow Row, DateTime UnlockUtc)> NewCandidates =
-                new List<(FriendsAchievementFeed.Services.Steam.Models.ScrapedAchievementRow, DateTime)>();
+            public List<(ScrapedAchievementRow Row, DateTime UnlockUtc)> NewCandidates = new List<(ScrapedAchievementRow, DateTime)>();
         }
 
         private FriendRowAnalysis AnalyzeFriendRowsForApp(
             string friendSteamId,
             int appId,
-            List<FriendsAchievementFeed.Services.Steam.Models.ScrapedAchievementRow> friendRows,
+            List<ScrapedAchievementRow> friendRows,
             bool friendHasAnyCached,
             Dictionary<int, DateTime> maxUnlockByAppForFriend,
             HashSet<string> existingIds)
@@ -200,35 +165,26 @@ namespace FriendsAchievementFeed.Services
             var maxCachedForApp = DateTime.MinValue;
             var hasMaxForApp = false;
 
-            // hasMaxForApp = we have baseline for THIS friend+app (not just "any cached anywhere")
             if (friendHasAnyCached && maxUnlockByAppForFriend != null)
                 hasMaxForApp = maxUnlockByAppForFriend.TryGetValue(appId, out maxCachedForApp);
 
-            // reduce string churn in the hot loop
-            var entryPrefix = friendSteamId + ":" + appId + ":";
+            var entryPrefix = string.Concat(friendSteamId, ":", appId.ToString(), ":");
 
             foreach (var row in friendRows)
             {
-                if (row == null || string.IsNullOrWhiteSpace(row.Key))
-                    continue;
+                if (row == null || string.IsNullOrWhiteSpace(row.Key)) continue;
 
                 var unlockUtc = DateTimeUtilities.AsUtcKind(row.UnlockTimeUtc);
-                if (!unlockUtc.HasValue)
-                    continue;
+                if (!unlockUtc.HasValue) continue;
 
                 analysis.SawAnyUnlocked = true;
 
                 var u = unlockUtc.Value;
 
-                if (hasMaxForApp)
-                {
-                    // Only gate against the last cached unlock for this friend+app; do not use cache write time
-                    // so offline or late-arriving unlocks with older timestamps can still backfill correctly.
-                    if (u <= maxCachedForApp)
-                        continue;
-                }
+                if (hasMaxForApp && u <= maxCachedForApp)
+                    continue;
 
-                var entryId = string.Concat(entryPrefix, row.Key, ":", u.Ticks);
+                var entryId = string.Concat(entryPrefix, row.Key, ":", u.Ticks.ToString());
                 if (existingIds != null && existingIds.Contains(entryId))
                     continue;
 
@@ -238,57 +194,46 @@ namespace FriendsAchievementFeed.Services
             return analysis;
         }
 
-        // --------------------
-        // Family-share forced apps inversion
-        // --------------------
         private Dictionary<string, HashSet<int>> BuildFamilySharingForcedAppsByFriend(Dictionary<string, int> playniteIdToAppId)
         {
             var result = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+            var all = _cacheService.LoadAllFamilySharingScanResults();
 
-            var all = _cacheService.LoadAllFamilySharingScanResults()
-                ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-            if (all.Count == 0 || playniteIdToAppId == null || playniteIdToAppId.Count == 0)
-                return result;
+            if (all == null || all.Count == 0 || playniteIdToAppId == null) return result;
 
             foreach (var kv in all)
             {
-                var playniteId = kv.Key;
-                if (string.IsNullOrWhiteSpace(playniteId)) continue;
-
-                if (!playniteIdToAppId.TryGetValue(playniteId, out var appId) || appId <= 0)
-                    continue;
-
-                foreach (var steamId in kv.Value ?? Enumerable.Empty<string>())
+                if (playniteIdToAppId.TryGetValue(kv.Key, out var appId) && appId > 0)
                 {
-                    if (string.IsNullOrWhiteSpace(steamId)) continue;
-
-                    if (!result.TryGetValue(steamId, out var set))
+                    foreach (var steamId in kv.Value ?? Enumerable.Empty<string>())
                     {
-                        set = new HashSet<int>();
-                        result[steamId] = set;
+                        if (!string.IsNullOrWhiteSpace(steamId))
+                        {
+                            if (!result.TryGetValue(steamId, out var set))
+                            {
+                                set = new HashSet<int>();
+                                result[steamId] = set;
+                            }
+                            set.Add(appId);
+                        }
                     }
-                    set.Add(appId);
                 }
             }
-
             return result;
         }
 
         // --------------------
-        // Friend scan plan
+        // Planning
         // --------------------
         private struct FriendPlan
         {
             public SteamFriendModel Friend;
             public List<int> Apps;
-
-            public HashSet<int> Owned;   // ownership signal (minutes map keys)
-            public HashSet<int> Forced;  // cached family-share forced scans
-            public bool AllowUnowned;    // friend in IncludeUnownedFriendIds
-            public bool ExplicitApps;    // apps explicitly selected (scan subset)
-
-            public int CandidateGames;   // shared (and non-zero minutes when minutes are available)
+            public HashSet<int> Owned;
+            public HashSet<int> Forced;
+            public bool AllowUnowned;
+            public bool ExplicitApps;
+            public int CandidateGames;
             public bool OwnershipUnavailable;
 
             public bool UnownedScanAllowedForApp(int appId) =>
@@ -296,17 +241,12 @@ namespace FriendsAchievementFeed.Services
         }
 
         // --------------------
-        // Unified scan entrypoint
+        // MAIN SCAN
         // --------------------
-        public async Task<RebuildPayload> ScanAsync(
-            CacheScanOptions options,
-            Action<RebuildUpdate> onUpdate,
-            CancellationToken cancel)
+        public async Task<RebuildPayload> ScanAsync(CacheScanOptions options, Action<RebuildUpdate> onUpdate, CancellationToken cancel)
         {
             options ??= new CacheScanOptions();
-
             _cacheService.EnsureDiskCacheOrClearMemory();
-
             var payload = new RebuildPayload();
 
             if (!InputValidator.HasSteamCredentials(_settings?.SteamUserId, _settings?.SteamApiKey))
@@ -317,15 +257,11 @@ namespace FriendsAchievementFeed.Services
             }
 
             var sw = Stopwatch.StartNew();
-
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingOwnedGames });
 
             var steamGamesDict = SteamLibraryProvider.BuildSteamLibraryGamesDict(_api, _steam, _logger);
             var myLibraryAppIds = new HashSet<int>(steamGamesDict.Keys);
 
-            // Defer building PlayniteId->AppId map and family-share forced apps until we know
-            // whether they're needed. These operations can be expensive (disk I/O, large maps)
-            // and are not required for quick incremental scans.
             Dictionary<string, int> playniteIdToAppId = null;
             Dictionary<string, HashSet<int>> forcedAppsByFriend = null;
 
@@ -333,732 +269,383 @@ namespace FriendsAchievementFeed.Services
 
             var friendsResult = options.IncludeFriends
                 ? await _steam.GetFriendsAsync(_settings.SteamUserId, _settings.SteamApiKey, cancel).ConfigureAwait(false)
-                : null;
-            var allFriends = friendsResult ?? new List<SteamFriendModel>();
+                : new List<SteamFriendModel>();
 
-            var friends = FriendScanner.FilterFriends(allFriends, options.FriendSteamIds);
+            var friends = FriendScanner.FilterFriends(friendsResult, options.FriendSteamIds);
 
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingExistingCache });
-
             var existingEntries = _cacheService.GetCachedFriendEntries() ?? new List<FeedEntry>();
-
-            var existingIds = new HashSet<string>(
-                existingEntries.Where(e => e != null && !string.IsNullOrWhiteSpace(e.Id)).Select(e => e.Id),
-                StringComparer.OrdinalIgnoreCase);
-
+            var existingIds = new HashSet<string>(existingEntries.Where(e => !string.IsNullOrWhiteSpace(e.Id)).Select(e => e.Id), StringComparer.OrdinalIgnoreCase);
             var friendAppMaxUnlock = FriendScanner.BuildFriendAppMaxUnlockMap(existingEntries);
-
             var includeUnownedSet = FriendScanner.ToSet(options.IncludeUnownedFriendIds);
-
-            // Explicit apps still exist as a general scan feature. QuickScanRecentPairs overrides it for friend selection.
             var explicitApps = ResolveExplicitAppIds(options, steamGamesDict);
             var hasExplicitApps = explicitApps != null && explicitApps.Count > 0;
-
             var quickScan = options.QuickScanRecentPairs;
-            var quickFriendsCount = Math.Max(0, options.QuickScanRecentFriendsCount);
-            var quickGamesPerFriend = Math.Max(0, options.QuickScanRecentGamesPerFriend);
 
-            // Only build the PlayniteId->AppId map and family-share forced apps when needed.
-            // Quick scans intentionally avoid family-share expansion and do not require this mapping.
             if (options.IncludeFriends && !quickScan)
             {
                 playniteIdToAppId = SteamLibraryProvider.BuildPlayniteIdToAppId(steamGamesDict);
                 forcedAppsByFriend = BuildFamilySharingForcedAppsByFriend(playniteIdToAppId);
             }
 
-            // Track which games have any friend unlocked achievements, so self scan can skip others.
-            var appsWithFriendUnlockedAchievements = new HashSet<int>();
-            bool anyFriendAchievementRowsFetched = false;
+            var allNewEntries = new ConcurrentBag<FeedEntry>();
+            var appsWithFriendUnlockedAchievements = new ConcurrentDictionary<int, byte>();
+            var familyShareDiscoveries = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>();
 
-            // ---------
-            // Plan: friends
-            // ---------
-            var friendPlans = new List<FriendPlan>(friends?.Count ?? 0);
-            var candidateGamesTotal = 0;
-            var includeUnownedCandidatesTotal = 0;
-            var friendsOwnershipUnavailable = 0;
+            // --------------------
+            // 3. Build Plans
+            // --------------------
+            var (friendPlans, appIdsForQuickScan, candidateGamesTotal, includeUnownedCandidatesTotal, friendsOwnershipUnavailable) = await BuildFriendPlansAsync(
+                friends, quickScan, options, existingEntries, steamGamesDict, myLibraryAppIds,
+                hasExplicitApps, explicitApps, includeUnownedSet, forcedAppsByFriend, cancel).ConfigureAwait(false);
 
-            // Union of friend appIds being scanned (used for quick-scan self scan).
-            var affectedAppIds = new HashSet<int>();
-
-            if (options.IncludeFriends)
-            {
-                if (quickScan)
-                {
-                    // Quick scan picks "most recent" friends/games from cached feed activity.
-                    // Build friend lookup without GroupBy/ToDictionary allocations.
-                    var friendById = new Dictionary<string, SteamFriendModel>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var f in friends)
-                    {
-                        if (f == null || string.IsNullOrWhiteSpace(f.SteamId)) continue;
-                        if (!friendById.ContainsKey(f.SteamId))
-                            friendById[f.SteamId] = f;
-                    }
-
-                    // Single-pass: choose up to K friends and for each up to N recent distinct apps
-                    var recentFriendIds = new List<string>(quickFriendsCount);
-                    var recentAppsByFriend = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
-
-                    if (quickFriendsCount > 0 && quickGamesPerFriend > 0 && friendById.Count > 0 && existingEntries.Count > 0)
-                    {
-                        foreach (var e in existingEntries
-                            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.FriendSteamId) && x.AppId > 0)
-                            .OrderByDescending(x => x.FriendUnlockTimeUtc))
-                        {
-                            var fid = e.FriendSteamId;
-                            if (!friendById.ContainsKey(fid)) continue;
-                            if (!steamGamesDict.TryGetValue(e.AppId, out _)) continue;
-
-                            if (!recentAppsByFriend.TryGetValue(fid, out var apps))
-                            {
-                                if (recentFriendIds.Count >= quickFriendsCount)
-                                    continue;
-
-                                recentFriendIds.Add(fid);
-                                apps = new List<int>(quickGamesPerFriend);
-                                recentAppsByFriend[fid] = apps;
-                            }
-
-                            if (apps.Count >= quickGamesPerFriend)
-                                continue;
-
-                            // lists are tiny; Contains is fine
-                            if (!apps.Contains(e.AppId))
-                                apps.Add(e.AppId);
-                        }
-                    }
-
-                    foreach (var fid in recentFriendIds)
-                    {
-                        cancel.ThrowIfCancellationRequested();
-
-                        if (!friendById.TryGetValue(fid, out var friend) || friend == null)
-                            continue;
-
-                        if (!recentAppsByFriend.TryGetValue(fid, out var recentApps) || recentApps == null || recentApps.Count == 0)
-                            continue;
-
-                        var plan = new FriendPlan
-                        {
-                            Friend = friend,
-                            Apps = new List<int>(recentApps),
-                            Owned = new HashSet<int>(),
-                            Forced = null,          // do not expand in quick scan
-                            AllowUnowned = false,   // do not expand in quick scan
-                            ExplicitApps = true,    // treat as an explicit bounded subset
-                            CandidateGames = 0,
-                            OwnershipUnavailable = false
-                        };
-
-                        // Small ownership/minutes fetch: only used to drop 0-minute games + ownership signal.
-                        Dictionary<int, int> pt = null;
-                        try
-                        {
-                            pt = await _steam.GetPlaytimesForAppsAsync(friend.SteamId, new HashSet<int>(plan.Apps), cancel).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            _logger?.Debug(ex, $"[FAF] QuickScan friend minutes lookup failed friend={friend.SteamId}");
-                            pt = null;
-                        }
-
-                        plan.Owned = pt != null ? new HashSet<int>(pt.Keys) : new HashSet<int>();
-
-                        if (pt != null && pt.Count > 0)
-                        {
-                            // Only use playtime to drop 0-minute candidates
-                            var filtered = new List<int>(plan.Apps.Count);
-                            foreach (var a in plan.Apps)
-                            {
-                                if (pt.TryGetValue(a, out var m) && m > 0)
-                                    filtered.Add(a);
-                            }
-                            plan.Apps = filtered;
-                        }
-                        else
-                        {
-                            plan.OwnershipUnavailable = true;
-                            friendsOwnershipUnavailable++;
-                        }
-
-                        plan.CandidateGames = plan.Apps?.Count ?? 0;
-
-                        if (plan.Apps != null)
-                            foreach (var a in plan.Apps)
-                                affectedAppIds.Add(a);
-
-                        candidateGamesTotal += plan.CandidateGames;
-                        friendPlans.Add(plan);
-                    }
-                }
-                else
-                {
-                    // Normal planning
-                    foreach (var friend in friends)
-                    {
-                        cancel.ThrowIfCancellationRequested();
-                        if (friend == null || string.IsNullOrWhiteSpace(friend.SteamId)) continue;
-
-                        var plan = new FriendPlan
-                        {
-                            Friend = friend,
-                            Apps = new List<int>(),
-                            Owned = new HashSet<int>(),
-                            Forced = (forcedAppsByFriend != null && forcedAppsByFriend.TryGetValue(friend.SteamId, out var fset)) ? fset : null,
-                            AllowUnowned = includeUnownedSet.Contains(friend.SteamId),
-                            ExplicitApps = hasExplicitApps,
-                            CandidateGames = 0,
-                            OwnershipUnavailable = false
-                        };
-
-                        // Explicit apps: scan same subset for all selected friends (or all friends).
-                        if (hasExplicitApps)
-                        {
-                            var baseApps = new List<int>(explicitApps.Count);
-                            foreach (var a in explicitApps)
-                            {
-                                if (a > 0 && steamGamesDict.TryGetValue(a, out _))
-                                    baseApps.Add(a);
-                            }
-
-                            plan.Apps = baseApps;
-
-                            Dictionary<int, int> pt = null;
-                            try
-                            {
-                                _logger?.Info($"[FAF] Fetching explicit friend owned apps data friend={friend.SteamId} appsCount={(plan.Apps?.Count ?? 0)}");
-                                pt = await _steam.GetPlaytimesForAppsAsync(friend.SteamId, new HashSet<int>(plan.Apps), cancel).ConfigureAwait(false);
-                                _logger?.Info($"[FAF] Fetched explicit friend owned apps data friend={friend.SteamId}: count={(pt?.Count ?? 0)}");
-                            }
-                            catch (OperationCanceledException) { throw; }
-                            catch (Exception ex)
-                            {
-                                _logger?.Debug(ex, $"[FAF] Friend owned apps lookup failed (explicit apps) {friend.SteamId}");
-                                pt = null;
-                            }
-
-                            plan.Owned = pt != null ? new HashSet<int>(pt.Keys) : new HashSet<int>();
-
-                            // Only use minutes to drop 0-minute games when we have them.
-                            if (pt != null && pt.Count > 0)
-                            {
-                                var filtered = new List<int>(plan.Apps.Count);
-                                foreach (var a in plan.Apps)
-                                {
-                                    if (pt.TryGetValue(a, out var m) && m > 0)
-                                        filtered.Add(a);
-                                }
-                                plan.Apps = filtered;
-                            }
-                            else
-                            {
-                                plan.OwnershipUnavailable = true;
-                                friendsOwnershipUnavailable++;
-                            }
-
-                            plan.CandidateGames = plan.Apps.Count;
-                            candidateGamesTotal += plan.CandidateGames;
-
-                            friendPlans.Add(plan);
-                            continue;
-                        }
-
-                        // Non-explicit: default is "games in common" per friend.
-                        var appsSet = new HashSet<int>();
-                        int candidateCount = 0;
-
-                        if (options.FriendsAllLibraryApps)
-                        {
-                            foreach (var a in steamGamesDict.Keys)
-                                if (a > 0) appsSet.Add(a);
-
-                            candidateCount = appsSet.Count;
-                        }
-                        else
-                        {
-                            Dictionary<int, int> friendMinutes = null;
-                            try
-                            {
-                                friendMinutes = await _steam.GetPlaytimesForAppsAsync(friend.SteamId, myLibraryAppIds, cancel).ConfigureAwait(false);
-                            }
-                            catch (OperationCanceledException) { throw; }
-                            catch (Exception ex)
-                            {
-                                _logger?.Debug(ex, $"[FAF] Friend owned apps lookup failed {friend.SteamId}");
-                                friendMinutes = null;
-                            }
-
-                            if (friendMinutes == null || friendMinutes.Count == 0)
-                            {
-                                // We can't compute intersection reliably.
-                                plan.OwnershipUnavailable = true;
-                                friendsOwnershipUnavailable++;
-                            }
-                            else
-                            {
-                                plan.Owned = new HashSet<int>(friendMinutes.Keys);
-
-                                // Intersection = friend-owned keys (already intersected by request set),
-                                // then drop 0-minute entries.
-                                foreach (var kv in friendMinutes)
-                                {
-                                    var appId = kv.Key;
-                                    var mins = kv.Value;
-                                    if (appId <= 0) continue;
-                                    if (mins <= 0) continue;
-                                    if (!steamGamesDict.TryGetValue(appId, out _)) continue;
-
-                                    appsSet.Add(appId);
-                                }
-                            }
-
-                            candidateCount = appsSet.Count;
-                        }
-
-                        plan.CandidateGames = candidateCount;
-
-                        if (plan.AllowUnowned)
-                        {
-                            // Optional: add missing apps to allow discovery scans.
-                            // If we don't have owned info, this becomes "all apps".
-                            var ownedSet = plan.Owned ?? new HashSet<int>();
-                            foreach (var a in steamGamesDict.Keys)
-                            {
-                                if (!ownedSet.Contains(a))
-                                    appsSet.Add(a);
-                            }
-                            includeUnownedCandidatesTotal += steamGamesDict.Count;
-                        }
-
-                        if (plan.Forced != null && plan.Forced.Count > 0)
-                        {
-                            foreach (var a in plan.Forced)
-                            {
-                                if (steamGamesDict.TryGetValue(a, out _))
-                                    appsSet.Add(a);
-                            }
-                        }
-
-                        // final filter
-                        appsSet.RemoveWhere(a => a <= 0 || !steamGamesDict.ContainsKey(a));
-
-                        plan.Apps = appsSet.Count == 0 ? new List<int>() : appsSet.ToList();
-
-                        candidateGamesTotal += plan.CandidateGames;
-                        friendPlans.Add(plan);
-                    }
-                }
-            }
-
-            var friendsToProcessCount = friendPlans.Count;
-
-            // ---------
-            // Plan: self (build list now for unified progress count; execution happens last)
-            // ---------
-            var selfApps = new List<int>();
-
-            if (options.IncludeSelf)
-            {
-                EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.LoadingSelfOwnedApps });
-
-                // If quick scan: self scan ONLY for affected appIds
-                var selfBaseApps = quickScan
-                    ? affectedAppIds.Where(a => a > 0 && steamGamesDict.TryGetValue(a, out _)).ToList()
-                    : (List<int>)null;
-
-                Dictionary<int, int> selfMinutes = null;
-                try
-                {
-                    _logger?.Info($"[FAF] Fetching self owned apps data steamId={_settings.SteamUserId}");
-                    selfMinutes = await _steam.GetOwnedGamePlaytimesAsync(_settings.SteamUserId, cancel).ConfigureAwait(false);
-                    _logger?.Info($"[FAF] Fetched self owned apps data steamId={_settings.SteamUserId}: count={(selfMinutes?.Count ?? 0)}");
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger?.Debug(ex, $"[FAF] Failed to load self owned apps data steamId={_settings.SteamUserId}");
-                    selfMinutes = null;
-                }
-
-                // Only Steam games in Playnite DB
-                selfMinutes = SteamLibraryProvider.FilterMinutesToLibrary(selfMinutes, myLibraryAppIds);
-
-                if (quickScan)
-                {
-                    // Only affected games; still drop 0-minute games if we have minutes.
-                    if (selfBaseApps == null || selfBaseApps.Count == 0)
-                    {
-                        selfApps = new List<int>();
-                    }
-                    else
-                    {
-                        selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? SteamLibraryProvider.FilterToNonZeroMinutesApps(selfBaseApps, selfMinutes)
-                            : selfBaseApps;
-                    }
-                }
-                else
-                {
-                    if (hasExplicitApps)
-                    {
-                        // Explicit selection, only drop 0-minute apps if we have minutes.
-                        var baseApps = new List<int>(explicitApps.Count);
-                        foreach (var a in explicitApps)
-                        {
-                            if (a > 0 && steamGamesDict.TryGetValue(a, out _))
-                                baseApps.Add(a);
-                        }
-
-                        selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? SteamLibraryProvider.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
-                            : baseApps;
-                    }
-                    else if (options.SelfAllLibraryApps)
-                    {
-                        // Full scan mode (ignores minutes filter).
-                        selfApps = steamGamesDict.Keys.Where(a => a > 0).ToList();
-                    }
-                    else
-                    {
-                        // Default: nominate all self games; if minutes are available, drop 0-minute games.
-                        var baseApps = steamGamesDict.Keys.Where(a => a > 0).ToList();
-                        selfApps = (selfMinutes != null && selfMinutes.Count > 0)
-                            ? SteamLibraryProvider.FilterToNonZeroMinutesApps(baseApps, selfMinutes)
-                            : baseApps;
-                    }
-                }
-            }
-
-            // Unified progress count
+            // 4. Calculate Self Plan
+            var selfApps = await CalculateSelfAppsPlanAsync(options, quickScan, hasExplicitApps, explicitApps, appIdsForQuickScan, steamGamesDict, myLibraryAppIds, cancel).ConfigureAwait(false);
+            
+            // Total steps for progress bar
             var overallCount = (selfApps?.Count ?? 0) + friendPlans.Sum(p => p.Apps?.Count ?? 0);
             var prog = new Progress(this, onUpdate, overallCount);
 
-            // no parallelism here; keep simple collections
-            var allNewEntries = new List<FeedEntry>(Math.Min(512, Math.Max(64, overallCount)));
-            var familyShareDiscoveriesByPlayniteId = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-
-            // ---------
-            // Execute: one friend
-            // ---------
-            async Task<int> ScanFriendAppsAsync(FriendPlan plan, int friendIndex)
-            {
-                var friend = plan.Friend;
-                var totalApps = plan.Apps?.Count ?? 0;
-
-                prog.Emit(new RebuildUpdate
-                {
-                    Kind = RebuildUpdateKind.FriendStarted,
-                    Stage = RebuildStage.ProcessingFriends,
-                    FriendSteamId = friend.SteamId,
-                    FriendPersonaName = friend.PersonaName,
-                    FriendIndex = friendIndex,
-                    FriendCount = friendsToProcessCount,
-                    CandidateGames = plan.CandidateGames,
-                    FriendAppIndex = 0,
-                    FriendAppCount = totalApps,
-                    FriendOwnershipDataUnavailable = plan.OwnershipUnavailable
-                }, force: true);
-
-                if (totalApps == 0)
-                {
-                    prog.Emit(new RebuildUpdate
-                    {
-                        Kind = RebuildUpdateKind.FriendCompleted,
-                        Stage = RebuildStage.ProcessingFriends,
-                        FriendSteamId = friend.SteamId,
-                        FriendPersonaName = friend.PersonaName,
-                        FriendIndex = friendIndex,
-                        FriendCount = friendsToProcessCount,
-                        FriendNewEntries = 0,
-                        FriendOwnershipDataUnavailable = plan.OwnershipUnavailable,
-                        TotalNewEntriesSoFar = allNewEntries.Count,
-                        TotalCandidateGamesSoFar = candidateGamesTotal,
-                        TotalIncludeUnownedCandidatesSoFar = includeUnownedCandidatesTotal
-                    }, force: true);
-                    return 0;
-                }
-
-                var maxUnlockByAppForFriend =
-                    (friendAppMaxUnlock != null && friendAppMaxUnlock.TryGetValue(friend.SteamId, out var m) && m != null)
-                        ? m
-                        : new Dictionary<int, DateTime>();
-
-                var friendHasAnyCached = maxUnlockByAppForFriend.Count > 0;
-                var added = 0;
-
-                for (int i = 0; i < totalApps; i++)
-                {
-                    cancel.ThrowIfCancellationRequested();
-
-                    var appId = plan.Apps[i];
-                    if (!steamGamesDict.TryGetValue(appId, out var game) || game == null)
-                    {
-                        prog.Step();
-                        continue;
-                    }
-
-                    prog.Step();
-                    prog.Emit(new RebuildUpdate
-                    {
-                        Kind = RebuildUpdateKind.FriendProgress,
-                        Stage = RebuildStage.ProcessingFriends,
-                        FriendSteamId = friend.SteamId,
-                        FriendPersonaName = friend.PersonaName,
-                        FriendIndex = friendIndex,
-                        FriendCount = friendsToProcessCount,
-                        FriendAppIndex = i + 1,
-                        FriendAppCount = totalApps,
-                        CurrentAppId = appId,
-                        CurrentGameName = game.Name
-                    }, i: i, total: totalApps);
-
-                    List<ScrapedAchievementRow> rows = null;
-                    try
-                    {
-                        rows = await _steam.GetScrapedAchievementsAsync(friend.SteamId, appId, cancel).ConfigureAwait(false);
-                        _logger?.Info($"[FAF] Fetched friend achievement rows friend={friend.SteamId} appId={appId} rows={(rows?.Count ?? 0)}");
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        _logger?.Debug(ex, $"[FAF] Friend achievement fetch failed friend={friend.SteamId} appId={appId}.");
-                        rows = null;
-                    }
-
-                    if (rows == null || rows.Count == 0)
-                        continue;
-
-                    // We got achievement rows at least once (so self filtering is meaningful).
-                    _logger?.Info($"[FAF] Processing friend achievement rows friend={friend.SteamId} appId={appId} rows={rows.Count}");
-                    anyFriendAchievementRowsFetched = true;
-
-                    var analysis = AnalyzeFriendRowsForApp(
-                        friendSteamId: friend.SteamId,
-                        appId: appId,
-                        friendRows: rows,
-                        friendHasAnyCached: friendHasAnyCached,
-                        maxUnlockByAppForFriend: maxUnlockByAppForFriend,
-                        existingIds: existingIds);
-
-                    if (analysis.SawAnyUnlocked)
-                    {
-                        // Record that at least one friend has unlocked achievements in this game.
-                        appsWithFriendUnlockedAchievements.Add(appId);
-                    }
-
-                    if (analysis.NewCandidates.Count > 0)
-                    {
-                        foreach (var c in analysis.NewCandidates)
-                        {
-                            var e = _entryFactory.CreateCachedFriendEntry(friend, game, appId, c.Row, c.UnlockUtc, c.Row.IconUrl);
-                            _logger?.Debug($"[FAF] New friend achievement entry created: friend={friend.SteamId} appId={appId} achievementKey={c.Row.Key} unlockUtc={c.UnlockUtc:u} entryId={e?.Id}");
-                            if (e != null)
-                            {
-                                allNewEntries.Add(e);
-                                added++;
-                            }
-                        }
-                    }
-
-                    // Discovery rule:
-                    // Only run discovery when we have a meaningful ownership signal for this friend.
-                    var hasOwnershipSignal = plan.Owned != null && plan.Owned.Count > 0;
-                    if (!hasOwnershipSignal)
-                        continue;
-
-                    var isActuallyUnowned = !plan.Owned.Contains(appId);
-                    var unownedScanAllowed = plan.UnownedScanAllowedForApp(appId);
-                    var discoveryAllowed = plan.ExplicitApps ? options.ExplicitAppsAllowUnownedDiscovery : unownedScanAllowed;
-
-                    if (discoveryAllowed && unownedScanAllowed && isActuallyUnowned && analysis.SawAnyUnlocked)
-                    {
-                        var pid = game.Id.ToString();
-                        if (!familyShareDiscoveriesByPlayniteId.TryGetValue(pid, out var set))
-                        {
-                            set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            familyShareDiscoveriesByPlayniteId[pid] = set;
-                        }
-                        set.Add(friend.SteamId);
-                    }
-                }
-
-                prog.Emit(new RebuildUpdate
-                {
-                    Kind = RebuildUpdateKind.FriendCompleted,
-                    Stage = RebuildStage.ProcessingFriends,
-                    FriendSteamId = friend.SteamId,
-                    FriendPersonaName = friend.PersonaName,
-                    FriendIndex = friendIndex,
-                    FriendCount = friendsToProcessCount,
-                    FriendNewEntries = added,
-                    FriendOwnershipDataUnavailable = plan.OwnershipUnavailable,
-                    TotalNewEntriesSoFar = allNewEntries.Count,
-                    TotalCandidateGamesSoFar = candidateGamesTotal,
-                    TotalIncludeUnownedCandidatesSoFar = includeUnownedCandidatesTotal
-                }, force: true);
-
-                return added;
-            }
-
-            // ---------
-            // Execute: self (LAST) with filter
-            // ---------
-            async Task RefreshSelfAsync(HashSet<int> appsWhereFriendsUnlocked, bool applyFriendAchievementFilter)
-            {
-                int saved = 0, usedExisting = 0, statsUnavailable = 0, transient = 0, emptyRows = 0, emptyData = 0, errors = 0, noSteamUser = 0;
-                int skippedNoFriendAchievements = 0;
-
-                prog.Emit(new RebuildUpdate
-                {
-                    Kind = RebuildUpdateKind.SelfStarted,
-                    Stage = RebuildStage.RefreshingSelfAchievements,
-                    SelfAppIndex = 0,
-                    SelfAppCount = selfApps?.Count ?? 0
-                }, force: true);
-
-                var total = selfApps?.Count ?? 0;
-                for (int i = 0; i < total; i++)
-                {
-                    cancel.ThrowIfCancellationRequested();
-
-                    var appId = selfApps[i];
-                    steamGamesDict.TryGetValue(appId, out var g);
-                    var pid = g?.Id.ToString();
-
-                    prog.Step();
-                    prog.Emit(new RebuildUpdate
-                    {
-                        Kind = RebuildUpdateKind.SelfProgress,
-                        Stage = RebuildStage.RefreshingSelfAchievements,
-                        SelfAppIndex = i + 1,
-                        SelfAppCount = total,
-                        CurrentAppId = appId,
-                        CurrentGameName = g?.Name
-                    }, i: i, total: total);
-
-                    if (g == null || string.IsNullOrWhiteSpace(pid))
-                        continue;
-
-                    // Skip self scan if none of your friends have unlocked achievements in this game.
-                    if (applyFriendAchievementFilter && (appsWhereFriendsUnlocked == null || !appsWhereFriendsUnlocked.Contains(appId)))
-                    {
-                        skippedNoFriendAchievements++;
-                        continue;
-                    }
-
-                    try
-                    {
-                        var selfData = await _selfAchievementManager.EnsureSelfAchievementDataAsync(pid, appId, cancel, forceRefresh: true).ConfigureAwait(false);
-                        // For now, just count as saved if we got non-empty data
-                        if (selfData != null && selfData.LastUpdatedUtc != default(DateTime))
-                        {
-                            if (selfData.NoAchievements)
-                                statsUnavailable++;
-                            else if ((selfData.UnlockTimesUtc?.Count ?? 0) > 0 || (selfData.SelfIconUrls?.Count ?? 0) > 0)
-                                saved++;
-                            else
-                                usedExisting++;
-                        }
-                        else
-                        {
-                            emptyData++;
-                        }
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        _logger?.Debug(ex, $"[FAF] Self achievement refresh failed (appId={appId}).");
-                        errors++;
-                    }
-                }
-
-                prog.Emit(new RebuildUpdate
-                {
-                    Kind = RebuildUpdateKind.SelfCompleted,
-                    Stage = RebuildStage.RefreshingSelfAchievements,
-                    SelfAppIndex = total,
-                    SelfAppCount = total
-                }, force: true);
-
-                _logger?.Info(
-                    $"[FAF] Self scan summary: total={total}, skippedNoFriendAchievements={skippedNoFriendAchievements}, " +
-                    $"saved={saved}, usedExisting={usedExisting}, statsUnavailable={statsUnavailable}, transient={transient}, " +
-                    $"emptyRows={emptyRows}, emptyData={emptyData}, noSteamUser={noSteamUser}, errors={errors}");
-            }
-
-            // ---------
-            // Run stages (FRIENDS FIRST, SELF LAST)
-            // ---------
+            // --------------------
+            // 5. Execute Friend Scans
+            // --------------------
             EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.ProcessingFriends });
 
             for (int i = 0; i < friendPlans.Count; i++)
-                await ScanFriendAppsAsync(friendPlans[i], i + 1).ConfigureAwait(false);
-
-            if (options.IncludeSelf)
             {
-                // Apply filter only if we actually got friend achievement rows (otherwise we don't know).
-                var applyFilter = friendsToProcessCount > 0 && anyFriendAchievementRowsFetched;
-                var friendUnlockedApps = appsWithFriendUnlockedAchievements; // already a HashSet<int>
+                await ProcessFriendPlanAsync(friendPlans[i], i, friendPlans.Count, steamGamesDict, friendAppMaxUnlock, existingIds,
+                    prog, allNewEntries, appsWithFriendUnlockedAchievements, familyShareDiscoveries, options, cancel).ConfigureAwait(false);
+            }
 
+            // --------------------
+            // 6. Execute Self Scan
+            // --------------------
+            if (options.IncludeSelf && selfApps != null && selfApps.Count > 0)
+            {
                 EmitUpdate(onUpdate, new RebuildUpdate { Kind = RebuildUpdateKind.Stage, Stage = RebuildStage.RefreshingSelfAchievements });
-                await RefreshSelfAsync(friendUnlockedApps, applyFilter).ConfigureAwait(false);
+
+                var unlockedSet = new HashSet<int>(appsWithFriendUnlockedAchievements.Keys);
+                bool applyFilter = friendPlans.Count > 0 && !appsWithFriendUnlockedAchievements.IsEmpty;
+
+                await ProcessSelfPlanAsync(selfApps, unlockedSet, applyFilter, steamGamesDict, prog, cancel).ConfigureAwait(false);
             }
 
-            // ---------
-            // Finalize + persist
-            // ---------
-            var dedup = new Dictionary<string, FeedEntry>(StringComparer.OrdinalIgnoreCase);
-            foreach (var e in allNewEntries)
-            {
-                if (e == null) continue;
-                if (string.IsNullOrWhiteSpace(e.Id)) continue;
-                if (!dedup.ContainsKey(e.Id))
-                    dedup[e.Id] = e;
-            }
-
-            var newEntries = dedup.Values
+            // --------------------
+            // 7. Finalize
+            // --------------------
+            var deduped = allNewEntries
+                .GroupBy(e => e.Id)
+                .Select(g => g.First())
                 .OrderByDescending(e => e.FriendUnlockTimeUtc)
                 .ToList();
 
-            _cacheService.MergeUpdateFriendFeed(newEntries);
-
-            payload.NewEntries = newEntries;
+            _cacheService.MergeUpdateFriendFeed(deduped);
+            payload.NewEntries = deduped;
 
             payload.Summary = new RebuildSummary
             {
-                NewEntriesCount = newEntries.Count,
+                NewEntriesCount = deduped.Count,
                 CandidateGamesTotal = candidateGamesTotal,
                 IncludeUnownedCandidatesTotal = includeUnownedCandidatesTotal,
                 NoCandidatesDetected = overallCount == 0,
                 FriendsOwnershipDataUnavailable = friendsOwnershipUnavailable
             };
 
-            try
+            if (!familyShareDiscoveries.IsEmpty)
             {
-                if (familyShareDiscoveriesByPlayniteId.Count > 0)
+                var dict = familyShareDiscoveries.ToDictionary(
+                    k => k.Key,
+                    v => (IEnumerable<string>)v.Value.Keys);
+                _cacheService.MergeAndSaveFamilySharingScanResults(dict);
+            }
+
+            prog.Emit(new RebuildUpdate { Kind = RebuildUpdateKind.Completed, Stage = RebuildStage.Completed }, force: true);
+            sw.Stop();
+            _logger?.Info($"[FAF] Scan finished. new={payload.Summary.NewEntriesCount}, elapsedMs={sw.ElapsedMilliseconds}");
+
+            return payload;
+        }
+
+        // --------------------
+        // Logic Splitting
+        // --------------------
+
+        private async Task<(List<FriendPlan> Plans, HashSet<int> AppIdsForQuickScan, int CandidateGamesTotal, int IncludeUnownedCandidatesTotal, int FriendsOwnershipUnavailable)> BuildFriendPlansAsync(
+            List<SteamFriendModel> friends, bool quickScan, CacheScanOptions options, List<FeedEntry> existingEntries,
+            Dictionary<int, Game> steamGamesDict, HashSet<int> myLibraryAppIds,
+            bool hasExplicitApps, List<int> explicitApps, HashSet<string> includeUnownedSet,
+            Dictionary<string, HashSet<int>> forcedAppsByFriend, CancellationToken cancel)
+        {
+            var plans = new List<FriendPlan>();
+            var appIdsForQuickScan = new HashSet<int>();
+            int candidateGamesTotal = 0;
+            int includeUnownedCandidatesTotal = 0;
+            int friendsOwnershipUnavailable = 0;
+
+            if (friends == null) return (plans, appIdsForQuickScan, candidateGamesTotal, includeUnownedCandidatesTotal, friendsOwnershipUnavailable);
+
+            if (quickScan)
+            {
+                var friendById = friends.Where(f => !string.IsNullOrWhiteSpace(f.SteamId))
+                                        .ToDictionary(f => f.SteamId, f => f, StringComparer.OrdinalIgnoreCase);
+
+                var recentAppsByFriend = new Dictionary<string, List<int>>();
+                int limitFriends = Math.Max(1, options.QuickScanRecentFriendsCount);
+                int limitGames = Math.Max(1, options.QuickScanRecentGamesPerFriend);
+
+                // Pre-sort collection once to avoid redundant sorting on each iteration
+                var sortedEntries = existingEntries.OrderByDescending(x => x.FriendUnlockTimeUtc).ToList();
+                foreach (var e in sortedEntries)
                 {
-                    _cacheService.MergeAndSaveFamilySharingScanResults(
-                        familyShareDiscoveriesByPlayniteId.ToDictionary(k => k.Key, v => (IEnumerable<string>)v.Value));
+                    if (recentAppsByFriend.Count >= limitFriends && !recentAppsByFriend.ContainsKey(e.FriendSteamId)) continue;
+                    if (!friendById.ContainsKey(e.FriendSteamId) || !steamGamesDict.ContainsKey(e.AppId)) continue;
+
+                    if (!recentAppsByFriend.TryGetValue(e.FriendSteamId, out var list))
+                    {
+                        list = [];
+                        recentAppsByFriend[e.FriendSteamId] = list;
+                    }
+
+                    if (list.Count < limitGames && !list.Contains(e.AppId))
+                        list.Add(e.AppId);
+                }
+
+                foreach (var kv in recentAppsByFriend)
+                {
+                    var friend = friendById[kv.Key];
+                    var apps = kv.Value;
+                    var plan = new FriendPlan
+                    {
+                        Friend = friend,
+                        Apps = apps,
+                        Owned = [.. apps],
+                        ExplicitApps = true,
+                        CandidateGames = apps.Count
+                    };
+                    plans.Add(plan);
+                    candidateGamesTotal += plan.CandidateGames;
+                    foreach (var a in apps) appIdsForQuickScan.Add(a);
                 }
             }
-            catch (Exception ex)
+            else
             {
-                _logger?.Error(ex, "Failed to persist scan artifacts.");
+                foreach (var friend in friends)
+                {
+                    if (string.IsNullOrWhiteSpace(friend.SteamId)) continue;
+
+                    var appsSet = new HashSet<int>();
+                    var plan = new FriendPlan
+                    {
+                        Friend = friend,
+                        Owned = new HashSet<int>(),
+                        Forced = (forcedAppsByFriend != null && forcedAppsByFriend.TryGetValue(friend.SteamId, out var f)) ? f : null,
+                        AllowUnowned = includeUnownedSet.Contains(friend.SteamId),
+                        ExplicitApps = hasExplicitApps
+                    };
+
+                    List<int> appsToScanForMinutes;
+                    if (hasExplicitApps)
+                        appsToScanForMinutes = explicitApps;
+                    else if (options.FriendsAllLibraryApps)
+                        appsToScanForMinutes = myLibraryAppIds.ToList();
+                    else
+                        appsToScanForMinutes = myLibraryAppIds.ToList();
+
+                    try
+                    {
+                        var minutes = await _steam.GetPlaytimesForAppsAsync(friend.SteamId, new HashSet<int>(appsToScanForMinutes), cancel).ConfigureAwait(false);
+                        if (minutes != null && minutes.Count > 0)
+                        {
+                            plan.Owned = new HashSet<int>(minutes.Keys);
+                            foreach (var kv in minutes)
+                            {
+                                if (kv.Value > 0 && steamGamesDict.ContainsKey(kv.Key))
+                                    appsSet.Add(kv.Key);
+                            }
+                        }
+                        else
+                        {
+                            plan.OwnershipUnavailable = true;
+                            friendsOwnershipUnavailable++;
+                        }
+                    }
+                    catch { /* ignore */ }
+
+                    if (plan.OwnershipUnavailable || plan.AllowUnowned)
+                    {
+                        if (hasExplicitApps)
+                        {
+                            foreach (var a in explicitApps) if (steamGamesDict.ContainsKey(a)) appsSet.Add(a);
+                        }
+                    }
+
+                    if (plan.AllowUnowned && !hasExplicitApps)
+                    {
+                        foreach (var a in myLibraryAppIds) appsSet.Add(a);
+                        includeUnownedCandidatesTotal += myLibraryAppIds.Count;
+                    }
+
+                    if (plan.Forced != null)
+                    {
+                        foreach (var a in plan.Forced) if (steamGamesDict.ContainsKey(a)) appsSet.Add(a);
+                    }
+
+                    plan.Apps = appsSet.ToList();
+                    plan.CandidateGames = plan.Apps.Count;
+                    candidateGamesTotal += plan.CandidateGames;
+                    plans.Add(plan);
+                }
+            }
+            return (plans, appIdsForQuickScan, candidateGamesTotal, includeUnownedCandidatesTotal, friendsOwnershipUnavailable);
+        }
+
+        private async Task ProcessFriendPlanAsync(
+            FriendPlan plan, int index, int totalFriends, Dictionary<int, Game> steamGamesDict,
+            Dictionary<string, Dictionary<int, DateTime>> friendAppMaxUnlock, HashSet<string> existingIds,
+            Progress prog, ConcurrentBag<FeedEntry> allNewEntries, ConcurrentDictionary<int, byte> appsWithFriendUnlockedAchievements,
+            ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> familyShareDiscoveries,
+            CacheScanOptions options, CancellationToken cancel)
+        {
+            var friend = plan.Friend;
+            var totalApps = plan.Apps.Count;
+
+            prog.Emit(new RebuildUpdate
+            {
+                Kind = RebuildUpdateKind.FriendStarted,
+                FriendSteamId = friend.SteamId,
+                FriendPersonaName = friend.PersonaName,
+                FriendIndex = index + 1,
+                FriendCount = totalFriends,
+                FriendAppCount = totalApps
+            }, force: true);
+
+            var maxUnlockByApp = (friendAppMaxUnlock != null && friendAppMaxUnlock.TryGetValue(friend.SteamId, out var m)) ? m : new Dictionary<int, DateTime>();
+            bool friendHasAnyCached = maxUnlockByApp.Count > 0;
+            int addedCount = 0;
+
+            for (int i = 0; i < totalApps; i++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                var appId = plan.Apps[i];
+                if (!steamGamesDict.TryGetValue(appId, out var game)) continue;
+
+                prog.Step();
+                
+                prog.Emit(new RebuildUpdate
+                {
+                    Kind = RebuildUpdateKind.FriendProgress,
+                    FriendIndex = index + 1,
+                    FriendCount = totalFriends,
+                    FriendAppIndex = i + 1,
+                    FriendAppCount = totalApps,
+                    CurrentGameName = game.Name,
+                    FriendSteamId = friend.SteamId,
+                    FriendPersonaName = friend.PersonaName
+                }, i: i, total: totalApps);
+
+                var rows = await _steam.GetScrapedAchievementsAsync(friend.SteamId, appId, cancel).ConfigureAwait(false);
+                if (rows == null || rows.Count == 0) continue;
+
+                var analysis = AnalyzeFriendRowsForApp(friend.SteamId, appId, rows, friendHasAnyCached, maxUnlockByApp, existingIds);
+
+                if (analysis.SawAnyUnlocked)
+                    appsWithFriendUnlockedAchievements.TryAdd(appId, 1);
+
+                foreach (var c in analysis.NewCandidates)
+                {
+                    var e = _entryFactory.CreateCachedFriendEntry(friend, game, appId, c.Row, c.UnlockUtc, c.Row.IconUrl);
+                    if (e != null)
+                    {
+                        allNewEntries.Add(e);
+                        addedCount++;
+                    }
+                }
+
+                bool discoveryAllowed = plan.ExplicitApps ? options.ExplicitAppsAllowUnownedDiscovery : plan.UnownedScanAllowedForApp(appId);
+                bool isActuallyUnowned = !plan.Owned.Contains(appId);
+
+                if (discoveryAllowed && isActuallyUnowned && analysis.SawAnyUnlocked)
+                {
+                    var pid = game.Id.ToString();
+                    var set = familyShareDiscoveries.GetOrAdd(pid, _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+                    set.TryAdd(friend.SteamId, 1);
+                }
             }
 
             prog.Emit(new RebuildUpdate
             {
-                Kind = RebuildUpdateKind.Completed,
-                Stage = RebuildStage.Completed,
-                TotalNewEntriesSoFar = payload.Summary.NewEntriesCount,
-                TotalCandidateGamesSoFar = payload.Summary.CandidateGamesTotal,
-                TotalIncludeUnownedCandidatesSoFar = payload.Summary.IncludeUnownedCandidatesTotal
+                Kind = RebuildUpdateKind.FriendCompleted,
+                FriendSteamId = friend.SteamId,
+                FriendPersonaName = friend.PersonaName,
+                FriendIndex = index + 1,
+                FriendCount = totalFriends,
+                FriendNewEntries = addedCount
             }, force: true);
+        }
 
-            sw.Stop();
-            _logger?.Info($"[FAF] Scan finished. new={payload.Summary.NewEntriesCount}, candidates={payload.Summary.CandidateGamesTotal}, elapsedMs={sw.ElapsedMilliseconds}");
-            return payload;
+        private async Task<List<int>> CalculateSelfAppsPlanAsync(
+            CacheScanOptions options, bool quickScan, bool hasExplicitApps, List<int> explicitApps,
+            HashSet<int> appIdsForQuickScan, Dictionary<int, Game> steamGamesDict, HashSet<int> myLibraryAppIds,
+            CancellationToken cancel)
+        {
+            if (quickScan) return appIdsForQuickScan.Where(a => a > 0 && steamGamesDict.ContainsKey(a)).ToList();
+
+            var baseApps = new List<int>();
+            if (hasExplicitApps) baseApps.AddRange(explicitApps.Where(a => a > 0 && steamGamesDict.ContainsKey(a)));
+            else if (options.SelfAllLibraryApps) baseApps.AddRange(steamGamesDict.Keys);
+            else baseApps.AddRange(steamGamesDict.Keys);
+
+            try
+            {
+                var selfMinutes = await _steam.GetOwnedGamePlaytimesAsync(_settings.SteamUserId, cancel).ConfigureAwait(false);
+                if (selfMinutes != null && selfMinutes.Count > 0)
+                {
+                    return SteamLibraryProvider.FilterToNonZeroMinutesApps(baseApps, selfMinutes);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "Failed to load self owned apps data.");
+            }
+
+            return baseApps;
+        }
+
+        private async Task ProcessSelfPlanAsync(
+            List<int> selfApps, HashSet<int> unlockedSet, bool applyFilter, Dictionary<int, Game> steamGamesDict,
+            Progress prog, CancellationToken cancel)
+        {
+            prog.Emit(new RebuildUpdate { Kind = RebuildUpdateKind.SelfStarted, SelfAppCount = selfApps.Count }, force: true);
+
+            for (int i = 0; i < selfApps.Count; i++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                var appId = selfApps[i];
+                steamGamesDict.TryGetValue(appId, out var g);
+                if (g == null) continue;
+
+                prog.Step();
+                prog.Emit(new RebuildUpdate
+                {
+                    Kind = RebuildUpdateKind.SelfProgress,
+                    SelfAppIndex = i + 1,
+                    SelfAppCount = selfApps.Count,
+                    CurrentGameName = g.Name
+                }, i: i, total: selfApps.Count);
+
+                if (applyFilter && !unlockedSet.Contains(appId)) continue;
+
+                try
+                {
+                    await _selfAchievementManager.EnsureSelfAchievementDataAsync(g.Id.ToString(), appId, cancel, forceRefresh: true).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Debug(ex, $"[FAF] Self achievement refresh failed (appId={appId}).");
+                }
+            }
+
+            prog.Emit(new RebuildUpdate { Kind = RebuildUpdateKind.SelfCompleted }, force: true);
         }
     }
 }

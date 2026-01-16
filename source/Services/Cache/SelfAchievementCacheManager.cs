@@ -113,8 +113,8 @@ namespace FriendsAchievementFeed.Services
                 health = await _steam
                     .GetScrapedAchievementsWithHealthAsync(steamUserId, appId, cancel, includeLocked: true)
                     .ConfigureAwait(false);
-                _logger?.Debug($"[FAF] Fetched self achievements (appId={appId}): " +
-                    $"TransientFailure={health?.TransientFailure}, StatsUnavailable={health?.StatsUnavailable}, Rows={health?.Rows?.Count ?? 0}, Detail={health?.Detail}");
+                // _logger?.Debug($"[FAF] Fetched self achievements (appId={appId}): " +
+                //     $"TransientFailure={health?.TransientFailure}, StatsUnavailable={health?.StatsUnavailable}, Rows={health?.Rows?.Count ?? 0}, Detail={health?.Detail}");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)

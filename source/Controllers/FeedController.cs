@@ -11,6 +11,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Common;
+using FriendsAchievementFeed.Common;
 using FriendsAchievementFeed.Services;
 using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Views.Helpers;
@@ -134,48 +135,36 @@ namespace FriendsAchievementFeed.Controllers
 
         private async Task TriggerFullRebuildAsync(CancellationToken cancellationToken)
         {
-            try
-            {
-                _logger?.Info("Triggering full cache rebuild from controller");
-                await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Failed to trigger full rebuild");
-                throw;
-            }
+            _logger?.Info("Triggering full cache rebuild from controller");
+            await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
         }
 
         private async Task TriggerIncrementalScanAsync(CancellationToken cancellationToken)
         {
-            try
+            _logger?.Info("Triggering incremental scan from controller");
+
+            var viewModel = ViewModelProvider?.Invoke();
+            if (viewModel != null)
             {
-                _logger?.Info("Triggering incremental scan from controller");
-                
-                var viewModel = ViewModelProvider?.Invoke();
-                if (viewModel != null)
-                {
-                    // Use the settings from the view model for incremental scan
-                    await _feedService.StartManagedIncrementalScanAsync(
-                        viewModel.IncrementalRecentFriendsCount,
-                        viewModel.IncrementalRecentGamesPerFriend).ConfigureAwait(false);
-                }
-                else
-                {
-                    // Fallback to defaults if no view model
-                    await _feedService.StartManagedIncrementalScanAsync().ConfigureAwait(false);
-                }
+                // Use the settings from the view model for incremental scan
+                await _feedService.StartManagedIncrementalScanAsync(
+                    viewModel.IncrementalRecentFriendsCount,
+                    viewModel.IncrementalRecentGamesPerFriend).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            else
             {
-                _logger?.Error(ex, "Failed to trigger incremental scan");
-                throw;
+                // Fallback to defaults if no view model
+                await _feedService.StartManagedIncrementalScanAsync().ConfigureAwait(false);
             }
         }
 
         public async Task RefreshFeedAsync(CancellationToken cancellationToken = default)
         {
             _refreshRequested = true;
+
+            // If a refresh is already running, we just set the flag and exit. 
+            // The existing running task will pick up the flag in the while() loop.
+            if (_refreshLock.CurrentCount == 0) return;
 
             await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -185,16 +174,16 @@ namespace FriendsAchievementFeed.Controllers
                     _refreshRequested = false;
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    _logger?.Info("Refreshing feed from controller");
-                    
+                    // _logger?.Debug("Refreshing feed from controller"); // Changed to Debug or removed
+
                     var viewModel = ViewModelProvider?.Invoke();
                     if (viewModel == null)
                     {
-                        _logger?.Warn("No view model available to refresh");
+                        // _logger?.Debug("No view model available to refresh");
                         return;
                     }
                     
-                    // Load from cache and hydrate for UI
+                    // Load from cache and hydrate for UI (Heavy work on ThreadPool)
                     var entries = await Task.Run(() =>
                     {
                         var gameName = GetGameNameForFilter();
@@ -207,9 +196,9 @@ namespace FriendsAchievementFeed.Controllers
                             .OrderByDescending(e => e.FriendUnlockTime)
                             .ThenByDescending(e => e.Id, StringComparer.Ordinal)
                             .ToList();
-                    }, cancellationToken).ConfigureAwait(true);
+                    }, cancellationToken).ConfigureAwait(true); // Continue on captured context (likely UI thread if called from UI)
                     
-                    // Compute default visible IDs based on MaxFeedItems setting
+                    // Compute default visible IDs
                     var maxItems = (_settings?.MaxFeedItems > 0) ? _settings.MaxFeedItems : 25;
                     HashSet<string> defaultVisibleIds = null;
                     if (entries.Count > maxItems)
@@ -221,10 +210,9 @@ namespace FriendsAchievementFeed.Controllers
                             StringComparer.Ordinal);
                     }
                     
-                    // Update the view model on UI thread
+                    // Update View Model on UI Thread
                     await _api.MainView.UIDispatcher.InvokeAsync(() =>
                     {
-                        // Apply the HideAchievementsLockedForSelf setting to entries
                         var hideLocked = _settings?.HideAchievementsLockedForSelf ?? false;
                         foreach (var entry in entries)
                         {
@@ -236,19 +224,24 @@ namespace FriendsAchievementFeed.Controllers
                         
                         viewModel.UpdateCacheData(entries, defaultVisibleIds);
                         
-                        // Update cache last updated time
                         var updated = _feedService.Cache.GetFriendFeedLastUpdatedUtc();
                         viewModel.CacheLastUpdatedText = updated?.ToLocalTime().ToString("g") 
                             ?? StringResources.GetString("LOCFriendsAchFeed_Status_Never");
                     }, DispatcherPriority.Background);
                     
-                    _logger?.Info($"Loaded {entries.Count} entries from cache");
+                    // _logger?.Debug($"Loaded {entries.Count} entries from cache"); // Changed to Debug
+
+                    // Small debounce delay if another request came in immediately
+                    if (_refreshRequested) await Task.Delay(50, cancellationToken);
                 }
+            }
+            catch (OperationCanceledException) 
+            { 
+                // Ignore cancellations
             }
             catch (Exception ex)
             {
                 _logger?.Error(ex, "Failed to refresh feed");
-                throw;
             }
             finally
             {
@@ -273,17 +266,9 @@ namespace FriendsAchievementFeed.Controllers
 
         private async Task CancelRebuildAsync(CancellationToken cancellationToken)
         {
-            try
-            {
-                _logger?.Info("Canceling rebuild from controller");
-                _feedService.CancelActiveRebuild();
-                await Task.CompletedTask;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Failed to cancel rebuild");
-                throw;
-            }
+            _logger?.Info("Canceling rebuild from controller");
+            _feedService.CancelActiveRebuild();
+            await Task.CompletedTask;
         }
 
         #endregion
@@ -329,8 +314,9 @@ namespace FriendsAchievementFeed.Controllers
             {
                 _logger?.Error(ex, "Failed to refresh feed after cache change");
             }
-            
-            NotifyCommandsChanged();
+
+            // Ensure command state updates happen on UI thread
+            _api.MainView.UIDispatcher.InvokeIfNeeded(NotifyCommandsChanged, DispatcherPriority.Background);
         }
 
         private void OnRebuildProgress(object sender, ProgressReport report)

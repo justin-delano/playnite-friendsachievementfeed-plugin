@@ -76,6 +76,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Header_In">in</sys:String>
 
     <!-- Feed statuses -->
+    <sys:String x:Key="LOCFriendsAchFeed_Status_Starting">Starting...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_LoadingFromCache">Loading from cache...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_NoCache_Building">No cache found. Building cache...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_UpdatingCache">Updating cache...</sys:String>
@@ -121,7 +122,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Line_Friend">{0} ({1}/{2}) — {3}</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Detail_WithSeparator">{0} — {1}</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_YourCacheUpToDate">Your achievements cache is up to date.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">Found {0} new achievement entries...</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">Found {0} new achievement entries.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Completed">Rebuild completed.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Canceled">Rebuild canceled.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Debug_RebuildCanceledByUser">Rebuild canceled by user.</sys:String>

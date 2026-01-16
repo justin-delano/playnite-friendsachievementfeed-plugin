@@ -1,5 +1,3 @@
-// SteamDataProvider.cs
-
 using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Services.Steam.Models;
 using Playnite.SDK;
@@ -8,32 +6,38 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using SteamFriendModel = FriendsAchievementFeed.Models.SteamFriend;
 
 namespace FriendsAchievementFeed.Services
 {
-    internal sealed class SteamDataProvider : ISteamDataProvider
+    internal sealed class SteamDataProvider : ISteamDataProvider, IDisposable
     {
         private readonly ILogger _logger;
         private readonly FriendsAchievementFeedPlugin _plugin;
         private readonly SteamClient _steam;
 
-        private readonly ConcurrentDictionary<string, Task<List<SteamFriendModel>>> _friendsCache =
-            new ConcurrentDictionary<string, Task<List<SteamFriendModel>>>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, Lazy<Task<List<SteamFriendModel>>>> _friendsCache =
+            new ConcurrentDictionary<string, Lazy<Task<List<SteamFriendModel>>>>(StringComparer.OrdinalIgnoreCase);
 
-        private readonly ConcurrentDictionary<string, Task<Dictionary<int, int>>> _ownedGamePlaytimeCache =
-            new ConcurrentDictionary<string, Task<Dictionary<int, int>>>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, Lazy<Task<Dictionary<int, int>>>> _ownedGamePlaytimeCache =
+            new ConcurrentDictionary<string, Lazy<Task<Dictionary<int, int>>>>(StringComparer.OrdinalIgnoreCase);
 
-        public SteamDataProvider(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin, ICacheManager CacheManager)
+        public SteamDataProvider(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin, ICacheManager cacheManager)
         {
             _logger = logger;
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
-            _ = CacheManager ?? throw new ArgumentNullException(nameof(CacheManager)); // currently unused here
 
             if (api == null) throw new ArgumentNullException(nameof(api));
             _steam = new SteamClient(api, _logger, _plugin.GetPluginUserDataPath());
+        }
+
+        public void Dispose()
+        {
+            _steam?.Dispose();
         }
 
         private static string BuildAchievementsUrl(string steamId64, int appId) =>
@@ -42,8 +46,8 @@ namespace FriendsAchievementFeed.Services
         private string GetApiKeyTrimmed() => 
             _plugin?.Settings?.SteamApiKey?.Trim();
 
-        public Task<bool> RefreshCookiesAsync(CancellationToken cancel)
-            => _steam.RefreshCookiesHeadlessAsync(cancel);
+        public Task<bool> RefreshCookiesAsync(CancellationToken cancel, bool force = false)
+            => _steam.RefreshCookiesHeadlessAsync(cancel, force);
 
         private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct) =>
             InputValidator.IsValidSteamId64(steamIdMaybe)
@@ -64,12 +68,12 @@ namespace FriendsAchievementFeed.Services
             if (string.IsNullOrWhiteSpace(apiKey))
                 return new Dictionary<int, int>();
 
-            var task = _ownedGamePlaytimeCache.GetOrAdd(resolved, id =>
-                _steam.GetOwnedGamePlaytimesFromApiAsync(apiKey, id, cancel));
+            var lazyTask = _ownedGamePlaytimeCache.GetOrAdd(resolved, 
+                new Lazy<Task<Dictionary<int, int>>>(() => _steam.GetOwnedGamePlaytimesFromApiAsync(apiKey, resolved, cancel)));
 
             try
             {
-                var dict = await task.ConfigureAwait(false) ?? new Dictionary<int, int>();
+                var dict = await lazyTask.Value.ConfigureAwait(false) ?? new Dictionary<int, int>();
                 if (dict.Count == 0) _ownedGamePlaytimeCache.TryRemove(resolved, out _);
                 return dict;
             }
@@ -155,7 +159,7 @@ namespace FriendsAchievementFeed.Services
         }
 
         // ---------------------------------------------------------------------
-        // Achievements scraping – classification (UNCHANGED)
+        // Achievements scraping – classification
         // ---------------------------------------------------------------------
 
         private static bool IsStatsForApp(string url)
@@ -177,14 +181,26 @@ namespace FriendsAchievementFeed.Services
 
         private static bool LooksLoggedOutHeuristic(string html, string finalUrl)
         {
-            if (SteamClient.LooksLoggedOutHeader(html)) return true;
+            // 1. URL Check: redirects to login are definitive
             if (IsLoginLikeUrl(finalUrl)) return true;
 
             if (string.IsNullOrEmpty(html)) return false;
 
-            return html.IndexOf("g_steamID = \"0\"", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   html.IndexOf("steamcommunity.com/login", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   html.IndexOf("store.steampowered.com/login", StringComparison.OrdinalIgnoreCase) >= 0;
+            // 2. Private profile or No Achievements is NOT a logout
+            if (html.IndexOf("This profile is private", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            if (html.IndexOf("no achievements", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+
+            // 3. Positive confirmation: If we see the user menu, we are definitely logged in.
+            if (html.IndexOf("global_action_menu", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+
+            // 4. Negative confirmation: Standard login header
+            if (SteamClient.LooksLoggedOutHeader(html)) return true;
+
+            // 5. Fallback: Specific Steam variable often present when logged in
+            // If this variable is "0", you are usually logged out.
+            if (html.IndexOf("g_steamID = \"0\"", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+
+            return false;
         }
 
         private static bool LooksPrivateOrUnavailable(string html, out string reason)
@@ -264,8 +280,19 @@ namespace FriendsAchievementFeed.Services
                 return res;
             }
 
+            // CRITICAL FIX: Only trigger refresh if we are definitively logged out AND it's not a private profile
             if (LooksLoggedOutHeuristic(html1, res.FinalUrl))
             {
+                // Double check it isn't just private
+                if (LooksPrivateOrUnavailable(html1, out var reason))
+                {
+                     res.TransientFailure = false;
+                     res.StatsUnavailable = true;
+                     res.Detail = reason;
+                     return res;
+                }
+
+                _logger?.Warn($"[FAF] Detected logout on {requested}. Refreshing cookies...");
                 await _steam.RefreshCookiesHeadlessAsync(cancel).ConfigureAwait(false);
 
                 var (page2, html2) = await FetchAsync().ConfigureAwait(false);
@@ -336,7 +363,6 @@ namespace FriendsAchievementFeed.Services
             res.Detail = "no_rows_unknown";
 
             var parsed = _steam.ParseAchievements(html, includeLocked) ?? new List<ScrapedAchievementRow>();
-            _logger?.Debug($"ClassifyScrapeOrPrivate: Parsed {parsed.Count} achievement rows (includeLocked={includeLocked})");
 
             if (parsed.Count > 0)
             {
@@ -382,25 +408,18 @@ namespace FriendsAchievementFeed.Services
             if (string.IsNullOrWhiteSpace(resolved))
                 return new List<SteamFriendModel>();
 
-            apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
-            if (string.IsNullOrWhiteSpace(apiKey))
-                apiKey = GetApiKeyTrimmed();
-
+            apiKey = string.IsNullOrWhiteSpace(apiKey) ? GetApiKeyTrimmed() : apiKey.Trim();
             if (string.IsNullOrWhiteSpace(apiKey))
                 return new List<SteamFriendModel>();
 
-            var task = _friendsCache.GetOrAdd(resolved, _ => LoadFriendsAsync(resolved, apiKey, cancel));
+            var lazyTask = _friendsCache.GetOrAdd(resolved, 
+                new Lazy<Task<List<SteamFriendModel>>>(() => LoadFriendsAsync(resolved, apiKey, cancel)));
 
             try
             {
-                var res = await task.ConfigureAwait(false) ?? new List<SteamFriendModel>();
+                var res = await lazyTask.Value.ConfigureAwait(false) ?? new List<SteamFriendModel>();
                 if (res.Count == 0) _friendsCache.TryRemove(resolved, out _);
                 return res;
-            }
-            catch (OperationCanceledException)
-            {
-                _friendsCache.TryRemove(resolved, out _);
-                throw;
             }
             catch
             {
@@ -412,6 +431,7 @@ namespace FriendsAchievementFeed.Services
         private async Task<List<SteamFriendModel>> LoadFriendsAsync(string steamId64, string apiKey, CancellationToken ct)
         {
             var result = new List<SteamFriendModel>();
+            // apiKey check already done by caller, but safe to keep basic validation
             if (string.IsNullOrWhiteSpace(apiKey) || !ulong.TryParse(steamId64, out _))
                 return result;
 
@@ -419,7 +439,6 @@ namespace FriendsAchievementFeed.Services
             if (friendIds == null || friendIds.Count == 0)
                 return result;
 
-            // This is the key change: API-based summaries (batched), not HTML scraping.
             var summaries = await _steam.GetPlayerSummariesAsync(apiKey, friendIds, ct).ConfigureAwait(false);
             if (summaries == null || summaries.Count == 0)
                 return result;

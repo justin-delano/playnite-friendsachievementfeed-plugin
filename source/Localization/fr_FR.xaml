@@ -76,6 +76,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Header_In">dans</sys:String>
 
     <!-- Feed statuses -->
+    <sys:String x:Key="LOCFriendsAchFeed_Status_Starting">Démarrage...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_LoadingFromCache">Chargement depuis le cache...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_NoCache_Building">Aucun cache trouvé. Création du flux...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_UpdatingCache">Mise à jour du flux...</sys:String>
@@ -121,7 +122,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Line_Friend">{0} ({1}/{2}) — {3}</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Detail_WithSeparator">{0} — {1}</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_YourCacheUpToDate">Votre cache de succès est à jour.</sys:String>
-    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">{0} nouveaux succès détectés…</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Rebuild_FoundNewEntries">{0} nouveaux succès détectés.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Completed">Mise à jour terminée.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Rebuild_Canceled">Mise à jour annulée.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Debug_RebuildCanceledByUser">Mise à jour annulée par l'utilisateur.</sys:String>

@@ -1,5 +1,3 @@
-// SteamClient.cs
-
 using HtmlAgilityPack;
 using FriendsAchievementFeed.Services.Steam.Models;
 using FriendsAchievementFeed.Services.Steam;
@@ -13,23 +11,20 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Runtime.Serialization;
-using System.Runtime.Serialization.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Web;
 
 namespace FriendsAchievementFeed.Services
 {
     // -------------------------------------------------------------------------
-    // Steam Session Store (persisted for self Steam ID only - cookies are in CEF)
+    // Steam Session Store
     // -------------------------------------------------------------------------
-
     internal sealed class SteamSessionStore
     {
         private readonly string _filePath;
+        private readonly object _fileLock = new object();
 
         public SteamSessionStore(string pluginUserDataPath)
         {
@@ -43,54 +38,41 @@ namespace FriendsAchievementFeed.Services
         public bool TryLoad(out SteamSessionData session)
         {
             session = null;
-            if (!File.Exists(_filePath))
-                return false;
-
-            try
+            lock (_fileLock)
             {
-                var json = File.ReadAllText(_filePath, Encoding.UTF8);
-                session = Serialization.FromJson<SteamSessionData>(json);
-                return session != null && !string.IsNullOrWhiteSpace(session.SelfSteamId64);
-            }
-            catch
-            {
-                session = null;
-                return false;
+                if (!File.Exists(_filePath)) return false;
+                try
+                {
+                    var json = File.ReadAllText(_filePath, Encoding.UTF8);
+                    session = Serialization.FromJson<SteamSessionData>(json);
+                    return session != null && !string.IsNullOrWhiteSpace(session.SelfSteamId64);
+                }
+                catch { return false; }
             }
         }
 
         public void Save(SteamSessionData session)
         {
-            if (session == null || string.IsNullOrWhiteSpace(session.SelfSteamId64))
-                return;
-
-            try
+            if (session == null || string.IsNullOrWhiteSpace(session.SelfSteamId64)) return;
+            lock (_fileLock)
             {
-                var json = Serialization.ToJson(session);
-                var tmp = _filePath + ".tmp";
-                File.WriteAllText(tmp, json, Encoding.UTF8);
-                
-                if (File.Exists(_filePath))
-                    File.Delete(_filePath);
-                File.Move(tmp, _filePath);
-            }
-            catch (Exception ex)
-            {
-                // Log but don't crash
-                System.Diagnostics.Debug.WriteLine($"Failed to save Steam session: {ex.Message}");
+                try
+                {
+                    var json = Serialization.ToJson(session);
+                    File.WriteAllText(_filePath, json, Encoding.UTF8);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to save Steam session: {ex.Message}");
+                }
             }
         }
 
         public void Clear()
         {
-            try
+            lock (_fileLock)
             {
-                if (File.Exists(_filePath))
-                    File.Delete(_filePath);
-            }
-            catch
-            {
-                /* ignore */
+                try { if (File.Exists(_filePath)) File.Delete(_filePath); } catch { }
             }
         }
     }
@@ -99,12 +81,8 @@ namespace FriendsAchievementFeed.Services
     {
         private static readonly Uri CommunityBase = new Uri("https://steamcommunity.com/");
         private static readonly Uri StoreBase = new Uri("https://store.steampowered.com/");
-
-        private const string DefaultUserAgent =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
+        private const string DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
         private const int MaxAttempts = 3;
-        private const int PlayerSummariesBatchSize = 100; // Steam API limit per call
 
         public sealed class SteamPageResult
         {
@@ -119,27 +97,26 @@ namespace FriendsAchievementFeed.Services
         private readonly ILogger _logger;
         private readonly SteamSessionManager _sessionManager;
         private readonly SteamApiHelper _apiHelper;
-
         private readonly CookieContainer _cookieJar = new CookieContainer();
         private readonly object _cookieLock = new object();
 
         private HttpClient _http;
         private HttpClientHandler _handler;
-
         private HttpClient _apiHttp;
         private HttpClientHandler _apiHandler;
+
+        private readonly ConcurrentDictionary<int, Lazy<Task<bool?>>> _hasAchievementsCache =
+            new ConcurrentDictionary<int, Lazy<Task<bool?>>>();
 
         public SteamClient(IPlayniteAPI api, ILogger logger, string pluginUserDataPath)
         {
             _api = api ?? throw new ArgumentNullException(nameof(api));
             _logger = logger;
-
             _sessionManager = new SteamSessionManager(api, logger, pluginUserDataPath);
 
             BuildHttpClientsOnce();
             _apiHelper = new SteamApiHelper(_apiHttp, _logger);
             
-            // Load cookies from CEF on startup for immediate use
             LoadCookiesFromCefIntoJar();
         }
 
@@ -152,11 +129,11 @@ namespace FriendsAchievementFeed.Services
         }
 
         // ---------------------------------------------------------------------
-        // Session Management (delegated to SteamSessionManager)
+        // Session Management
         // ---------------------------------------------------------------------
 
-        public Task<bool> RefreshCookiesHeadlessAsync(CancellationToken ct) => 
-            _sessionManager.RefreshCookiesHeadlessAsync(ct);
+        public Task<bool> RefreshCookiesHeadlessAsync(CancellationToken ct, bool force = false) =>
+            _sessionManager.RefreshCookiesHeadlessAsync(ct, force);
 
         public Task<(bool Success, string Message)> AuthenticateInteractiveAsync(CancellationToken ct) => 
             _sessionManager.AuthenticateInteractiveAsync(ct);
@@ -170,41 +147,35 @@ namespace FriendsAchievementFeed.Services
         public Task<string> GetSelfSteamId64Async(CancellationToken ct) => 
             _sessionManager.GetSelfSteamId64Async(ct);
 
-        /// <summary>
-        /// Ensures session is valid, refreshing if needed and loading cookies into HttpClient
-        /// </summary>
-        private async Task<bool> EnsureSessionAsync(CancellationToken ct)
+        private async Task<bool> EnsureSessionAsync(CancellationToken ct, bool forceRefresh = false)
         {
             ct.ThrowIfCancellationRequested();
 
-            // Check if we need to refresh
-            if (!_sessionManager.NeedsRefresh)
+            if (!forceRefresh && !_sessionManager.NeedsRefresh)
             {
-                // Session is valid, just ensure cookies are loaded in HttpClient
                 lock (_cookieLock)
                 {
-                    if (HasCookiesInJar())
-                        return true;
+                    if (HasCookiesInJar()) return true;
+                }
+                
+                LoadCookiesFromCefIntoJar();
+                lock (_cookieLock)
+                {
+                    if (HasCookiesInJar()) return true;
                 }
             }
 
-            // Need to refresh: use WebView to get fresh cookies from CEF
-            _logger?.Debug("[FAF] Refreshing Steam session");
+            _logger?.Debug($"[FAF] Refreshing Steam session (Force={forceRefresh})...");
             var refreshed = await _sessionManager.RefreshCookiesHeadlessAsync(ct).ConfigureAwait(false);
-            
+
             if (refreshed)
             {
-                // Load cookies from CEF into HttpClient for fast requests
                 LoadCookiesFromCefIntoJar();
             }
-            
+
             return refreshed;
         }
 
-        /// <summary>
-        /// Loads current CEF cookies into HttpClient's CookieContainer for fast requests.
-        /// Also ensures timezoneOffset cookie is set to Pacific Time to match Steam's default.
-        /// </summary>
         private void LoadCookiesFromCefIntoJar()
         {
             lock (_cookieLock)
@@ -217,81 +188,54 @@ namespace FriendsAchievementFeed.Services
         {
             try
             {
-                var communityCookies = _cookieJar.GetCookies(CommunityBase);
-                var storeCookies = _cookieJar.GetCookies(StoreBase);
-
-                return communityCookies?.Count > 0 || storeCookies?.Count > 0;
-            }
-            catch
-            {
+                var cookies = _cookieJar.GetCookies(CommunityBase);
+                foreach (Cookie c in cookies)
+                {
+                    if (c.Name.Equals("steamLoginSecure", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
                 return false;
             }
-        }
-
-        private static Uri GetAddUriForDomain(string cookieDomain)
-        {
-            var d = (cookieDomain ?? "").Trim().TrimStart('.');
-            if (d.EndsWith("steamcommunity.com", StringComparison.OrdinalIgnoreCase))
-                return CommunityBase;
-            if (d.EndsWith("steampowered.com", StringComparison.OrdinalIgnoreCase))
-                return StoreBase;
-            return new Uri("https://" + d);
-        }
-
-        private static string TryExtractSteamId64FromSteamLoginSecure(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return null;
-
-            string decoded;
-            try { decoded = Uri.UnescapeDataString(value); }
-            catch (Exception)
-            {
-                // Malformed cookie value; use as-is
-                decoded = value;
-            }
-
-            var m = Regex.Match(decoded, @"(?<id>\d{17})");
-            return m.Success ? m.Groups["id"].Value : null;
+            catch { return false; }
         }
 
         // ---------------------------------------------------------------------
-        // Steam Web API: Owned games playtimes + schema
+        // Steam Web API
         // ---------------------------------------------------------------------
 
         public async Task<Dictionary<int, int>> GetOwnedGamePlaytimesFromApiAsync(
-            string apiKey,
-            string steamId64,
-            CancellationToken ct,
-            bool includePlayedFreeGames = true)
+            string apiKey, string steamId64, CancellationToken ct, bool includePlayedFreeGames = true)
         {
-            if (string.IsNullOrWhiteSpace(apiKey)) return new Dictionary<int, int>();
-            if (string.IsNullOrWhiteSpace(steamId64) || !ulong.TryParse(steamId64, out _)) return new Dictionary<int, int>();
+            if (string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(steamId64)) 
+                return new Dictionary<int, int>();
 
-            var url =
-                "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/" +
-                $"?key={Uri.EscapeDataString(apiKey)}" +
-                $"&steamid={Uri.EscapeDataString(steamId64)}" +
-                $"&include_appinfo=0" +
-                $"&include_played_free_games={(includePlayedFreeGames ? "1" : "0")}";
+            var url = $"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/" +
+                      $"?key={Uri.EscapeDataString(apiKey)}" +
+                      $"&steamid={Uri.EscapeDataString(steamId64)}" +
+                      $"&include_appinfo=0" +
+                      $"&include_played_free_games={(includePlayedFreeGames ? "1" : "0")}";
 
             try
             {
-                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
+                var json = await _apiHttp.GetStringAsync(url).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(json)) return new Dictionary<int, int>();
+
+                var env = Serialization.FromJson<OwnedGamesEnvelope>(json);
+                var games = env?.Response?.Games;
+                
+                if (games == null) return new Dictionary<int, int>();
+
+                var result = new Dictionary<int, int>();
+                foreach (var g in games)
                 {
-                    req.Headers.TryAddWithoutValidation("User-Agent", DefaultUserAgent);
-                    req.Headers.TryAddWithoutValidation("Accept", "application/json");
-
-                    using (var resp = await _apiHttp.SendAsync(req, ct).ConfigureAwait(false))
-                    {
-                        if (!resp.IsSuccessStatusCode)
-                            return new Dictionary<int, int>();
-
-                        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        return ParseOwnedGamesJsonToPlaytimes(json);
-                    }
+                    if (!g.AppId.HasValue || g.AppId.Value <= 0) continue;
+                    var mins = Math.Max(0, g.PlaytimeForever ?? 0);
+                    
+                    if (!result.ContainsKey(g.AppId.Value) || mins > result[g.AppId.Value])
+                        result[g.AppId.Value] = mins;
                 }
+                return result;
             }
-            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 _logger?.Debug(ex, $"[FAF] OwnedGames API request failed steamId={steamId64}");
@@ -299,49 +243,12 @@ namespace FriendsAchievementFeed.Services
             }
         }
 
-        private static Dictionary<int, int> ParseOwnedGamesJsonToPlaytimes(string json)
-        {
-            var result = new Dictionary<int, int>();
-            if (string.IsNullOrWhiteSpace(json)) return result;
-
-            try
-            {
-                var ser = new DataContractJsonSerializer(typeof(OwnedGamesEnvelope));
-                using (var ms = new MemoryStream(Encoding.UTF8.GetBytes(json)))
-                {
-                    var env = ser.ReadObject(ms) as OwnedGamesEnvelope;
-                    var games = env?.Response?.Games;
-                    if (games == null || games.Count == 0) return result;
-
-                    foreach (var g in games)
-                    {
-                        if (g == null || !g.AppId.HasValue || g.AppId.Value <= 0) continue;
-
-                        var mins = g.PlaytimeForever ?? 0;
-                        if (mins < 0) mins = 0;
-
-                        if (!result.TryGetValue(g.AppId.Value, out var existing) || mins > existing)
-                            result[g.AppId.Value] = mins;
-                    }
-                }
-            }
-            catch
-            {
-                return new Dictionary<int, int>();
-            }
-
-            return result;
-        }
-
         // ---------------------------------------------------------------------
         // Profile / Achievements
         // ---------------------------------------------------------------------
 
         public Task<SteamPageResult> GetProfilePageAsync(string steamId64, CancellationToken ct)
-        {
-            var url = $"https://steamcommunity.com/profiles/{steamId64}/?l=english";
-            return GetSteamPageAsync(url, requiresCookies: true, ct);
-        }
+            => GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64}/?l=english", true, ct);
 
         public async Task<string> GetProfileHtmlAsync(string steamId64, CancellationToken ct)
         {
@@ -350,68 +257,32 @@ namespace FriendsAchievementFeed.Services
         }
 
         public Task<SteamPageResult> GetAchievementsPageAsync(string steamId64, int appId, CancellationToken ct)
-        {
-            var url = $"https://steamcommunity.com/profiles/{steamId64}/stats/{appId}/?tab=achievements&l=english";
-            return GetSteamPageAsync(url, requiresCookies: true, ct);
-        }
+            => GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64}/stats/{appId}/?tab=achievements&l=english", true, ct);
 
         // ---------------------------------------------------------------------
         // Player Summaries
         // ---------------------------------------------------------------------
 
-        // Back-compat overload: old callers still work, but will do HTML fallback.
-        public Task<List<SteamPlayerSummaries>> GetPlayerSummariesAsync(List<ulong> steamIds, CancellationToken ct)
-            => GetPlayerSummariesAsync(apiKey: null, steamIds: steamIds, ct: ct);
-
         public async Task<List<SteamPlayerSummaries>> GetPlayerSummariesAsync(string apiKey, IEnumerable<ulong> steamIds, CancellationToken ct)
         {
-            var ids = steamIds?.
-                Where(x => x > 0)
-                .Distinct()
-                .ToList() ?? new List<ulong>();
+            var ids = steamIds?.Where(x => x > 0).Distinct().ToList() ?? new List<ulong>();
+            if (ids.Count == 0) return new List<SteamPlayerSummaries>();
 
-            if (ids.Count == 0)
-                return new List<SteamPlayerSummaries>();
-
-            // If no API key, fall back to HTML (slower).
-            if (string.IsNullOrWhiteSpace(apiKey))
-                return await GetPlayerSummariesFromHtmlAsync(ids, ct).ConfigureAwait(false);
-
-            // Prefer API via helper
-            var apiResults = await _apiHelper.GetPlayerSummariesAsync(apiKey, ids, ct).ConfigureAwait(false);
-            
-            // If API returned nothing at all, do a last-resort HTML fallback
-            if (apiResults.Count == 0)
-                return await GetPlayerSummariesFromHtmlAsync(ids, ct).ConfigureAwait(false);
-
-            return apiResults;
-        }
-
-        private static IEnumerable<List<ulong>> Batch(IReadOnlyList<ulong> ids, int batchSize)
-        {
-            for (int i = 0; i < ids.Count; i += batchSize)
+            if (!string.IsNullOrWhiteSpace(apiKey))
             {
-                var size = Math.Min(batchSize, ids.Count - i);
-                var chunk = new List<ulong>(size);
-                for (int j = 0; j < size; j++)
-                    chunk.Add(ids[i + j]);
-                yield return chunk;
+                var apiResults = await _apiHelper.GetPlayerSummariesAsync(apiKey, ids, ct).ConfigureAwait(false);
+                if (apiResults.Count > 0) return apiResults;
             }
-        }
 
-        private async Task<List<SteamPlayerSummaries>> GetPlayerSummariesFromHtmlAsync(IReadOnlyList<ulong> steamIds, CancellationToken ct)
-        {
+            // Fallback to HTML
             var results = new List<SteamPlayerSummaries>();
-            if (steamIds == null || steamIds.Count == 0) return results;
-
-            foreach (var id in steamIds)
+            foreach (var id in ids)
             {
                 ct.ThrowIfCancellationRequested();
                 var html = await GetProfileHtmlAsync(id.ToString(), ct).ConfigureAwait(false);
-                var p = TryParseProfileHtmlToSummary(id, html);
+                var p = SteamHtmlParser.TryParseProfileHtmlToSummary(id, html);
                 if (p != null) results.Add(p);
             }
-
             return results;
         }
 
@@ -419,50 +290,24 @@ namespace FriendsAchievementFeed.Services
         // Friends (API)
         // ---------------------------------------------------------------------
 
-        public Task<List<ulong>> GetFriendIdsAsync(string steamId64, string apiKey, CancellationToken ct)
-            => GetFriendSteamIdsAsync(steamId64, apiKey, ct);
-
-        public async Task<List<ulong>> GetFriendSteamIdsAsync(string steamId64, string apiKey, CancellationToken ct)
+        public async Task<List<ulong>> GetFriendIdsAsync(string steamId64, string apiKey, CancellationToken ct)
         {
-            if (!InputValidator.HasSteamCredentials(steamId64, apiKey))
-                return new List<ulong>();
+            if (!InputValidator.HasSteamCredentials(steamId64, apiKey)) return new List<ulong>();
 
             try
             {
-                var url =
-                    "https://api.steampowered.com/ISteamUser/GetFriendList/v1/" +
-                    $"?key={Uri.EscapeDataString(apiKey)}" +
-                    $"&steamid={Uri.EscapeDataString(steamId64)}" +
-                    $"&relationship=friend";
-
-                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
-                {
-                    req.Headers.TryAddWithoutValidation("User-Agent", DefaultUserAgent);
-                    req.Headers.TryAddWithoutValidation("Accept", "application/json");
-
-                    using (var resp = await _apiHttp.SendAsync(req, ct).ConfigureAwait(false))
-                    {
-                        if (!resp.IsSuccessStatusCode)
-                            return new List<ulong>();
-
-                        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        if (string.IsNullOrWhiteSpace(json))
-                            return new List<ulong>();
-
-                        var root = Serialization.FromJson<FriendListResponseRoot>(json);
-
-                        return root?.FriendsList?.Friends?
-                            .Where(f => string.Equals(f?.Relationship, "friend", StringComparison.OrdinalIgnoreCase))
-                            .Select(f => f?.SteamId)
-                            .Where(s => !string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out _))
-                            .Select(ulong.Parse)
-                            .Distinct()
-                            .ToList()
-                            ?? new List<ulong>();
-                    }
-                }
+                var url = $"https://api.steampowered.com/ISteamUser/GetFriendList/v1/?key={apiKey}&steamid={steamId64}&relationship=friend";
+                var json = await _apiHttp.GetStringAsync(url).ConfigureAwait(false);
+                
+                var root = Serialization.FromJson<FriendListResponseRoot>(json);
+                return root?.FriendsList?.Friends?
+                    .Where(f => string.Equals(f?.Relationship, "friend", StringComparison.OrdinalIgnoreCase))
+                    .Select(f => f.SteamId)
+                    .Where(s => ulong.TryParse(s, out _))
+                    .Select(ulong.Parse)
+                    .Distinct()
+                    .ToList() ?? new List<ulong>();
             }
-            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 _logger?.Debug(ex, "[FAF] GetFriendSteamIdsAsync API request failed.");
@@ -471,7 +316,7 @@ namespace FriendsAchievementFeed.Services
         }
 
         // ---------------------------------------------------------------------
-        // Achievements HTML parser (unchanged)
+        // Parsing / Schema
         // ---------------------------------------------------------------------
 
         public List<ScrapedAchievementRow> ParseAchievements(string html, bool includeLocked)
@@ -488,35 +333,23 @@ namespace FriendsAchievementFeed.Services
             if (nodes == null || nodes.Count == 0) return new List<ScrapedAchievementRow>();
 
             var results = new List<ScrapedAchievementRow>();
-
             foreach (var row in nodes)
             {
-                if (row.SelectSingleNode(".//div[contains(@class,'achieveHiddenBox')]") != null)
-                    continue;
+                if (row.SelectSingleNode(".//div[contains(@class,'achieveHiddenBox')]") != null) continue;
 
-                var unlockText = WebUtility.HtmlDecode(
-                    row.SelectSingleNode(".//div[contains(@class,'achieveUnlockTime')]")?.InnerText ?? ""
-                ).Trim();
-
+                var unlockText = WebUtility.HtmlDecode(row.SelectSingleNode(".//div[contains(@class,'achieveUnlockTime')]")?.InnerText ?? "").Trim();
                 var unlockUtc = SteamTimeParser.TryParseSteamUnlockTimeEnglishToUtc(unlockText);
 
-                if (!includeLocked && !unlockUtc.HasValue)
-                    continue;
+                if (!includeLocked && !unlockUtc.HasValue) continue;
 
                 var title = WebUtility.HtmlDecode(row.SelectSingleNode(".//h3")?.InnerText ?? "").Trim();
                 var desc = WebUtility.HtmlDecode(row.SelectSingleNode(".//h5")?.InnerText ?? "").Trim();
-
-                var img =
-                    row.SelectSingleNode(".//div[contains(@class,'achieveImgHolder')]//img") ??
-                    row.SelectSingleNode(".//img[contains(@src,'steamstatic') or contains(@src,'steamcdn') or contains(@src,'akamai')]") ??
-                    row.SelectSingleNode(".//img");
-
+                var img = row.SelectSingleNode(".//div[contains(@class,'achieveImgHolder')]//img") ??
+                          row.SelectSingleNode(".//img");
                 var iconUrl = img?.GetAttributeValue("src", "")?.Trim() ?? "";
 
                 var keyBasisA = !string.IsNullOrWhiteSpace(title) ? title : iconUrl;
-                var keyBasisB = !string.IsNullOrWhiteSpace(desc)
-                    ? desc
-                    : (unlockUtc.HasValue ? unlockUtc.Value.ToString("O", CultureInfo.InvariantCulture) : string.Empty);
+                var keyBasisB = !string.IsNullOrWhiteSpace(desc) ? desc : (unlockUtc.HasValue ? unlockUtc.Value.ToString("O") : "");
 
                 results.Add(new ScrapedAchievementRow
                 {
@@ -527,103 +360,53 @@ namespace FriendsAchievementFeed.Services
                     UnlockTimeUtc = unlockUtc
                 });
             }
-
             return results;
         }
 
-        private readonly ConcurrentDictionary<int, Task<bool?>> _hasAchievementsCache =
-            new ConcurrentDictionary<int, Task<bool?>>();
-
         public Task<bool?> GetAppHasAchievementsAsync(string apiKey, int appId, CancellationToken ct)
         {
-            if (appId <= 0 || string.IsNullOrWhiteSpace(apiKey))
-                return Task.FromResult<bool?>(false);
-
-            return _hasAchievementsCache.GetOrAdd(appId, _ => FetchAppHasAchievementsAsync(apiKey, appId, ct));
+            if (appId <= 0 || string.IsNullOrWhiteSpace(apiKey)) return Task.FromResult<bool?>(false);
+            
+            return _hasAchievementsCache.GetOrAdd(appId, 
+                new Lazy<Task<bool?>>(() => FetchAppHasAchievementsAsync(apiKey, appId, ct))).Value;
         }
 
         private async Task<bool?> FetchAppHasAchievementsAsync(string apiKey, int appId, CancellationToken ct)
         {
             try
             {
-                var url =
-                    $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={Uri.EscapeDataString(apiKey)}&appid={appId}&l=english";
-
-                using (var req = new HttpRequestMessage(HttpMethod.Get, url))
-                {
-                    req.Headers.TryAddWithoutValidation("User-Agent", DefaultUserAgent);
-                    req.Headers.TryAddWithoutValidation("Accept", "application/json");
-
-                    using (var resp = await _http.SendAsync(req, ct).ConfigureAwait(false))
-                    {
-                        if (!resp.IsSuccessStatusCode)
-                            return false;
-
-                        var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                        if (stream == null)
-                            return false;
-
-                        var serializer = new DataContractJsonSerializer(typeof(SchemaRoot));
-                        SchemaRoot root;
-                        try { root = serializer.ReadObject(stream) as SchemaRoot; }
-                        catch (Exception)
-                        {
-                            // Failed to deserialize schema response
-                            return false;
-                        }
-
-                        var ach = root?.Response?.Game?.AvailableGameStats?.Achievements;
-                        return (ach != null && ach.Length > 0);
-                    }
-                }
+                var url = $"https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key={apiKey}&appid={appId}&l=english";
+                var json = await _http.GetStringAsync(url).ConfigureAwait(false);
+                var root = Serialization.FromJson<SchemaRoot>(json);
+                var ach = root?.Response?.Game?.AvailableGameStats?.Achievements;
+                return (ach != null && ach.Length > 0);
             }
-            catch (OperationCanceledException) { throw; }
-            catch
-            {
-                _hasAchievementsCache.TryRemove(appId, out _);
-                return false;
+            catch 
+            { 
+                return false; 
             }
         }
 
         // ---------------------------------------------------------------------
-        // HTTP core (HTML)
+        // HTTP Core
         // ---------------------------------------------------------------------
-
-        private async Task<string> GetSteamStringAsync(string url, bool requiresCookies, CancellationToken ct)
-        {
-            var page = await GetSteamPageAsync(url, requiresCookies, ct).ConfigureAwait(false);
-            return page?.Html ?? string.Empty;
-        }
 
         private async Task<SteamPageResult> GetSteamPageAsync(string url, bool requiresCookies, CancellationToken ct)
         {
-            var result = new SteamPageResult
-            {
-                RequestedUrl = url,
-                FinalUrl = url,
-                Html = string.Empty,
-                StatusCode = 0,
-                WasRedirected = false
-            };
-
+            var result = new SteamPageResult { RequestedUrl = url, FinalUrl = url, Html = "", StatusCode = 0, WasRedirected = false };
             if (string.IsNullOrWhiteSpace(url)) return result;
 
             Uri uri;
-            try { uri = new Uri(url); }
-            catch (Exception)
-            {
-                // Invalid URL format
-                return result;
-            }
+            try { uri = new Uri(url); } catch { return result; }
 
-            // If cookies required, ensure session is valid (loads cookies into HttpClient)
-            if (requiresCookies && uri.Host.IndexOf("steamcommunity.com", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    uri.Host.IndexOf("steampowered.com", StringComparison.OrdinalIgnoreCase) >= 0)
+            bool isSteamAuth = uri.Host.EndsWith("steamcommunity.com", StringComparison.OrdinalIgnoreCase) ||
+                               uri.Host.EndsWith("steampowered.com", StringComparison.OrdinalIgnoreCase);
+
+            if (requiresCookies && isSteamAuth)
             {
                 await EnsureSessionAsync(ct).ConfigureAwait(false);
             }
 
-            // Use fast HttpClient for all requests (cookies already loaded)
             for (int attempt = 1; attempt <= MaxAttempts; attempt++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -632,84 +415,48 @@ namespace FriendsAchievementFeed.Services
                 {
                     req.Headers.TryAddWithoutValidation("User-Agent", DefaultUserAgent);
                     req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
-                    req.Headers.Referrer = uri.Host.IndexOf("steampowered.com", StringComparison.OrdinalIgnoreCase) >= 0
-                        ? StoreBase
-                        : CommunityBase;
+                    
+                    if (isSteamAuth)
+                        req.Headers.Referrer = uri.Host.Contains("store") ? StoreBase : CommunityBase;
 
                     try
                     {
                         using (var resp = await _http.SendAsync(req, ct).ConfigureAwait(false))
                         {
-                            var finalUri = resp.RequestMessage?.RequestUri;
-                            var finalUrl = finalUri?.ToString() ?? url;
-
                             result.StatusCode = resp.StatusCode;
-                            result.FinalUrl = finalUrl;
-                            result.WasRedirected = finalUri != null &&
-                                !string.Equals(finalUri.AbsoluteUri, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
+                            result.FinalUrl = resp.RequestMessage?.RequestUri?.ToString() ?? url;
+                            result.WasRedirected = !string.Equals(result.FinalUrl, url, StringComparison.OrdinalIgnoreCase);
 
-                            result.Html = await resp.Content.ReadAsStringAsync().ConfigureAwait(false) ?? string.Empty;
+                            if (requiresCookies && isSteamAuth && attempt == 1)
+                            {
+                                bool softRedirect = result.FinalUrl.Contains("/login") || result.FinalUrl.Contains("openid");
+                                if (resp.StatusCode == HttpStatusCode.Unauthorized || resp.StatusCode == HttpStatusCode.Forbidden || softRedirect)
+                                {
+                                    _logger.Warn($"[FAF] Auth failed for {url} (Status={resp.StatusCode}, Url={result.FinalUrl}). Forcing session refresh.");
+                                    await EnsureSessionAsync(ct, forceRefresh: true).ConfigureAwait(false);
+                                    continue; 
+                                }
+                            }
+
+                            result.Html = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                             return result;
                         }
                     }
-                    catch (OperationCanceledException) { throw; }
-                    catch
+                    catch (Exception)
                     {
                         if (attempt < MaxAttempts) continue;
-                        result.Html = string.Empty;
                         return result;
                     }
                 }
             }
-
             return result;
         }
 
-        // ---------------------------------------------------------------------
-        // HTML signals
-        // ---------------------------------------------------------------------
-
-        internal static bool LooksLoggedOutHeader(string html)
-        {
-            if (string.IsNullOrWhiteSpace(html)) return false;
-
-            if (html.IndexOf("global_action_menu", StringComparison.OrdinalIgnoreCase) >= 0)
-                return false;
-
-            if (Regex.IsMatch(
-                html,
-                @"<a[^>]+class\s*=\s*[""'][^""']*\bglobal_action_link\b[^""']*[""'][^>]+href\s*=\s*[""'][^""']*/login[^""']*[""']",
-                RegexOptions.IgnoreCase | RegexOptions.Singleline))
-            {
-                return true;
-            }
-
-            return html.IndexOf("Sign In", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                   html.IndexOf("/login", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                   html.IndexOf("global_action", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        internal static bool HasAnyAchievementRows(string html)
-        {
-            if (string.IsNullOrWhiteSpace(html)) return false;
-
-            return html.IndexOf("achievements_list", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   html.IndexOf("achieveRow", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   html.IndexOf("achieveImgHolder", StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        // ---------------------------------------------------------------------
-        // HttpClient setup
-        // ---------------------------------------------------------------------
-
         private void BuildHttpClientsOnce()
         {
-            _handler?.Dispose();
-            _http?.Dispose();
-            _apiHandler?.Dispose();
-            _apiHttp?.Dispose();
+            _handler?.Dispose(); _http?.Dispose();
+            _apiHandler?.Dispose(); _apiHttp?.Dispose();
 
-            // Use CookieContainer loaded from CEF for fast authenticated requests
             _cookieJar.PerDomainCapacity = 300;
 
             _handler = new HttpClientHandler
@@ -719,26 +466,42 @@ namespace FriendsAchievementFeed.Services
                 AllowAutoRedirect = true,
                 UseCookies = true
             };
-
             _http = new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(30) };
 
             _apiHandler = new HttpClientHandler
             {
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
                 AllowAutoRedirect = true,
-                UseCookies = false
+                UseCookies = false 
             };
-
             _apiHttp = new HttpClient(_apiHandler) { Timeout = TimeSpan.FromSeconds(30) };
         }
 
         // ---------------------------------------------------------------------
-        // Private parsing helpers
+        // Static Helpers (Restored)
         // ---------------------------------------------------------------------
 
-        private SteamPlayerSummaries TryParseProfileHtmlToSummary(ulong id, string html)
+        public static bool LooksLoggedOutHeader(string html)
         {
-            return SteamHtmlParser.TryParseProfileHtmlToSummary(id, html);
+            if (string.IsNullOrWhiteSpace(html)) return false;
+            
+            if (html.IndexOf("global_action_menu", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+
+            if (Regex.IsMatch(html, @"<a[^>]+class\s*=\s*[""'][^""']*\bglobal_action_link\b[^""']*[""'][^>]+href\s*=\s*[""'][^""']*/login[^""']*[""']", RegexOptions.IgnoreCase | RegexOptions.Singleline))
+                return true;
+
+            return html.IndexOf("Sign In", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   html.IndexOf("/login", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   html.IndexOf("global_action", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        public static bool HasAnyAchievementRows(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) return false;
+            return html.IndexOf("achievements_list", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   html.IndexOf("achieveRow", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   html.IndexOf("achieveImgHolder", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

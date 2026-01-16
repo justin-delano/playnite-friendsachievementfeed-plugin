@@ -9,10 +9,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 using Common;
+using FriendsAchievementFeed.Common;
 
 namespace FriendsAchievementFeed.Services
 {
-    public class FeedManager
+    public class FeedManager : IDisposable
     {
         private readonly object _runLock = new object();
         private CancellationTokenSource _activeRunCts;
@@ -36,16 +37,15 @@ namespace FriendsAchievementFeed.Services
         private readonly FriendsAchievementFeedPlugin _plugin;
         private readonly ICacheManager _cacheService;
 
-        private readonly ISteamDataProvider _steam;
+        // Dependencies that need disposal
+        private readonly SteamDataProvider _steam;
+        
         private readonly FeedEntryFactory _entryFactory;
         private readonly CacheRebuilder _rebuildService;
-
-        // Hydrates friend-only cached entries to UI FeedEntry (overlay self at UI time)
         private readonly FeedEntryHydrator _hydrator;
-
-        // Progress mapping delegated to helper
         private readonly RebuildProgressMapper _progressMapper;
         private readonly SettingsPersister _settingsPersistence;
+
         public ICacheManager Cache => _cacheService;
 
         public event EventHandler CacheChanged
@@ -67,7 +67,9 @@ namespace FriendsAchievementFeed.Services
 
             _cacheService = new CacheManager(api, logger, _plugin);
 
+            // FIX: Pass all 4 arguments required by the reverted SteamDataProvider constructor
             _steam = new SteamDataProvider(_api, _logger, _plugin, _cacheService);
+            
             _entryFactory = new FeedEntryFactory();
             _hydrator = new FeedEntryHydrator(_cacheService, _entryFactory);
 
@@ -75,11 +77,23 @@ namespace FriendsAchievementFeed.Services
             _progressMapper = new RebuildProgressMapper();
             _settingsPersistence = new SettingsPersister(_settings, _plugin, _cacheService, _logger, PostToUi);
 
-            try { _cacheService.CacheChanged += _settingsPersistence.OnCacheChanged; }
+            try 
+            { 
+                _cacheService.CacheChanged += _settingsPersistence.OnCacheChanged; 
+            }
             catch (Exception e)
             {
                 _logger?.Error(e, StringResources.GetString("LOCFriendsAchFeed_Error_RefreshFeedAfterCacheChange"));
             }
+        }
+
+        public void Dispose()
+        {
+            if (_cacheService != null && _settingsPersistence != null)
+            {
+                _cacheService.CacheChanged -= _settingsPersistence.OnCacheChanged;
+            }
+            _steam?.Dispose();
         }
 
         // -----------------------------
@@ -88,8 +102,7 @@ namespace FriendsAchievementFeed.Services
 
         private void PostToUi(Action action)
         {
-            var dispatcher = _api?.MainView?.UIDispatcher;
-            dispatcher.InvokeIfNeeded(action, DispatcherPriority.Background);
+            _api?.MainView?.UIDispatcher?.InvokeIfNeeded(action, DispatcherPriority.Background);
         }
 
         private void Report(string message, int current = 0, int total = 0, bool canceled = false)
@@ -155,41 +168,34 @@ namespace FriendsAchievementFeed.Services
             };
         }
 
-        // Quick incremental scan: up to N most-recent friends (by cached unlock activity),
-        // up to M most-recent games per friend (by cached unlock activity), bounded to N*M pairs.
         private static CacheScanOptions IncrementalOptions(int recentFriends, int recentGamesPerFriend)
         {
             return new CacheScanOptions
             {
                 IncludeSelf = true,
                 IncludeFriends = true,
-
                 QuickScanRecentPairs = true,
                 QuickScanRecentFriendsCount = Math.Max(0, recentFriends),
                 QuickScanRecentGamesPerFriend = Math.Max(0, recentGamesPerFriend),
-
-                // Keep consistent with other entrypoints.
                 ExplicitAppsAllowUnownedDiscovery = true
             };
         }
 
         // -----------------------------
-        // Centralized progress mapping (via helper)
+        // Centralized progress mapping
         // -----------------------------
 
         private void HandleUpdate(RebuildUpdate update)
         {
             var mapped = _progressMapper.Map(update);
-            if (mapped == null)
+            if (mapped != null)
             {
-                return;
+                Report(mapped.Message, mapped.CurrentStep, mapped.TotalSteps, mapped.IsCanceled);
             }
-
-            Report(mapped.Message, mapped.CurrentStep, mapped.TotalSteps, mapped.IsCanceled);
         }
 
         // -----------------------------
-        // Managed scan runner (single implementation)
+        // Managed scan runner
         // -----------------------------
 
         private bool TryBeginRun(out CancellationTokenSource cts)
@@ -218,11 +224,6 @@ namespace FriendsAchievementFeed.Services
             }
         }
 
-        private void ResetRunState()
-        {
-            _progressMapper.Reset();
-        }
-
         private async Task RunManagedAsync(
             Func<CancellationToken, Task<RebuildPayload>> runner,
             Func<RebuildPayload, string> finalMessage,
@@ -231,26 +232,30 @@ namespace FriendsAchievementFeed.Services
             if (!TryBeginRun(out var cts))
                 return;
 
-            ResetRunState();
+            _progressMapper.Reset();
+
+            // Report immediately so UI updates buttons before any async work
+            var startMsg = StringResources.GetString("LOCFriendsAchFeed_Status_Starting");
+            Report(startMsg, 0, 1);
 
             try
             {
                 try
                 {
-                    var refreshed = await _steam.RefreshCookiesAsync(cts.Token).ConfigureAwait(false);
-                    if (!refreshed)
-                    {
-                        _logger?.Debug("[FAF] Steam cookie refresh before scan returned no cookies.");
-                    }
+                    // Force cookie refresh on every rebuild to ensure fresh Steam authentication
+                    await _steam.RefreshCookiesAsync(cts.Token, force: true).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException)
+                {
+                    throw; // Re-throw cancellation to outer handler
+                }
                 catch (Exception ex)
                 {
-                    _logger?.Debug(ex, "[FAF] Steam cookie refresh before scan failed; continuing.");
+                    _logger?.Debug(ex, "[FAF] Pre-scan cookie refresh failed (continuing anyway).");
                 }
 
-                // Unified progress callback for both scan modes
-                Action<RebuildUpdate> onUpdate = HandleUpdate;
+                // Check for cancellation after cookie refresh completes
+                cts.Token.ThrowIfCancellationRequested();
 
                 var payload = await runner(cts.Token).ConfigureAwait(false);
 
@@ -268,7 +273,6 @@ namespace FriendsAchievementFeed.Services
             catch (Exception ex)
             {
                 _logger?.Error(ex, errorLogMessage);
-
                 var msg = StringResources.GetString("LOCFriendsAchFeed_Error_FailedRebuild");
                 _lastStatus = msg;
                 Report(msg, 0, 1);
@@ -276,6 +280,7 @@ namespace FriendsAchievementFeed.Services
             finally
             {
                 EndRun();
+                Report(_lastStatus, 1, 1);
             }
         }
 
@@ -320,12 +325,6 @@ namespace FriendsAchievementFeed.Services
                 errorLogMessage: "[FAF] Managed single-game scan failed.");
         }
 
-        /// <summary>
-        /// Incremental scan:
-        /// - choose up to recentFriends most recent friends (by cached friend unlock activity)
-        /// - choose up to recentGamesPerFriend most recent games per friend (by cached friend unlock activity)
-        /// - scan ONLY those friend/game pairs and self for affected games
-        /// </summary>
         public Task StartManagedIncrementalScanAsync(int recentFriends = 5, int recentGamesPerFriend = 5)
         {
             return RunManagedAsync(
@@ -350,11 +349,10 @@ namespace FriendsAchievementFeed.Services
         {
             lock (_runLock)
             {
-                try { _activeRunCts?.Cancel(); }
-                catch (Exception ex)
-                {
-                    _logger?.Error(ex, StringResources.GetString("LOCFriendsAchFeed_Error_CancelActiveRebuild"));
-                }
+                ErrorHandlingHelpers.TryExecute(
+                    () => _activeRunCts?.Cancel(),
+                    _logger,
+                    StringResources.GetString("LOCFriendsAchFeed_Error_CancelActiveRebuild"));
             }
         }
 
@@ -362,11 +360,9 @@ namespace FriendsAchievementFeed.Services
         // Cache read APIs
         // -----------------------------
 
-        // Friend-only raw
         public List<FeedEntry> GetAllCachedFriendEntries()
             => _cacheService.GetCachedFriendEntries() ?? new List<FeedEntry>();
 
-        // Convenience: hydrated FeedEntry for callers that still want it
         public List<FeedEntry> GetAllCachedEntriesHydrated()
             => _hydrator.HydrateForUi(GetAllCachedFriendEntries(), CancellationToken.None) ?? new List<FeedEntry>();
 

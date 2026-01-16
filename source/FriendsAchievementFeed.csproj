@@ -49,6 +49,10 @@
 		<None Include="Localization\en_US.xaml">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+
+		<None Include="Localization\fr_FR.xaml">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 	</ItemGroup>
 	<ItemGroup>
 		<!-- Keep as WPF Resource so pack:// URIs work when loaded inside Playnite -->
