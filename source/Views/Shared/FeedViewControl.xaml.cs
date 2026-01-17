@@ -31,20 +31,6 @@ namespace FriendsAchievementFeed.Views.Shared
             set => SetValue(DisposeLogicOnUnloadProperty, value);
         }
 
-        // NEW: filler slot for per-game refresh injection
-        public static readonly DependencyProperty ExtraRebuildContentProperty =
-            DependencyProperty.Register(
-                nameof(ExtraRebuildContent),
-                typeof(object),
-                typeof(FeedViewControl),
-                new PropertyMetadata(null));
-
-        public object ExtraRebuildContent
-        {
-            get => GetValue(ExtraRebuildContentProperty);
-            set => SetValue(ExtraRebuildContentProperty, value);
-        }
-
         private void FriendClearButton_Click(object sender, RoutedEventArgs e)
         {
             if (DataContext is FeedControlLogic vm)
@@ -182,6 +168,8 @@ namespace FriendsAchievementFeed.Views.Shared
             set => SetValue(ShowGameNameProperty, value);
         }
 
+
+
         private FeedControlLogic _logic;
         public FeedControlLogic Logic
         {
@@ -200,19 +188,9 @@ namespace FriendsAchievementFeed.Views.Shared
             Unloaded += FeedViewControl_Unloaded;
         }
 
-        private async void FeedViewControl_Loaded(object sender, RoutedEventArgs e)
+        private void FeedViewControl_Loaded(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                if (Logic != null)
-                {
-                    await Logic.RefreshAsync();
-                }
-            }
-            catch
-            {
-                // ignore
-            }
+            // The parent control is now responsible for triggering the initial refresh.
         }
 
         private void FeedViewControl_Unloaded(object sender, RoutedEventArgs e)

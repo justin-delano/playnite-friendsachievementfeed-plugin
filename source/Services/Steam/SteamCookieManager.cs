@@ -190,13 +190,24 @@ namespace FriendsAchievementFeed.Services
         {
             try
             {
-                using (var view = api.WebViews.CreateOffscreenView())
+                // Run on UI thread (Playnite SDK not fully thread safe).
+                api.MainView.UIDispatcher.Invoke(() =>
                 {
-                    view.DeleteDomainCookies(".steamcommunity.com");
-                    view.DeleteDomainCookies("steamcommunity.com");
-                    view.DeleteDomainCookies(".steampowered.com");
-                    view.DeleteDomainCookies("steampowered.com");
-                }
+                    using (var view = api.WebViews.CreateOffscreenView(new WebViewSettings()))
+                    {
+                        // Match both "steamcommunity.com" and ".steamcommunity.com" etc.
+                        view.DeleteDomainCookiesRegex(@"(^|\.)steamcommunity\.com$");
+                        view.DeleteDomainCookiesRegex(@"(^|\.)steampowered\.com$");
+
+                        // Optional: some Steam flows can leave host-only cookies on common subdomains.
+                        view.DeleteDomainCookies("store.steampowered.com");
+                        view.DeleteDomainCookies("login.steampowered.com");
+                        view.DeleteDomainCookies("help.steampowered.com");
+
+                        // Optional nuclear fallback if you still see you’re logged in:
+                        // view.DeleteCookies(string.Empty, string.Empty); // clears ALL cookies in CEF
+                    }
+                });
             }
             catch (Exception ex)
             {

@@ -94,7 +94,7 @@ namespace FriendsAchievementFeed.Views
 
             Loaded += async (s, e) =>
             {
-                await CheckSteamAuthAsync(diskOnly: true).ConfigureAwait(true);
+                await CheckSteamAuthAsync().ConfigureAwait(true);
             };
         }
 
@@ -104,7 +104,7 @@ namespace FriendsAchievementFeed.Views
 
         private async void SteamAuth_Check_Click(object sender, RoutedEventArgs e)
         {
-            await CheckSteamAuthAsync(diskOnly: false).ConfigureAwait(true);
+            await CheckSteamAuthAsync().ConfigureAwait(true);
         }
 
         private async void SteamAuth_Authenticate_Click(object sender, RoutedEventArgs e)
@@ -116,7 +116,7 @@ namespace FriendsAchievementFeed.Views
                 var (ok, msg) = await _steamAuthHelper.AuthenticateInteractiveAsync(CancellationToken.None).ConfigureAwait(true);
                 SteamAuthStatus = msg;
 
-                await CheckSteamAuthAsync(diskOnly: false).ConfigureAwait(true);
+                await CheckSteamAuthAsync().ConfigureAwait(true);
                 await LoadFriendsAsync().ConfigureAwait(true);
             }
             finally
@@ -130,12 +130,12 @@ namespace FriendsAchievementFeed.Views
             SteamAuthStatus = _steamAuthHelper.ClearSavedCookies();
         }
 
-        private async Task CheckSteamAuthAsync(bool diskOnly)
+        private async Task CheckSteamAuthAsync()
         {
             SetSteamAuthBusy(true);
             try
             {
-                SteamAuthStatus = await _steamAuthHelper.CheckAuthAsync(diskOnly, CancellationToken.None).ConfigureAwait(true);
+                SteamAuthStatus = await _steamAuthHelper.CheckAuthAsync(CancellationToken.None).ConfigureAwait(true);
             }
             finally
             {
@@ -235,7 +235,7 @@ namespace FriendsAchievementFeed.Views
             }
             else if (string.Equals(name, "GeneralTab", StringComparison.OrdinalIgnoreCase))
             {
-                await CheckSteamAuthAsync(diskOnly: true).ConfigureAwait(true);
+                await CheckSteamAuthAsync().ConfigureAwait(true);
                 _logger?.Info("[FAF] Checked Steam auth for General tab.");
             }
         }

@@ -16,24 +16,26 @@
         <shared:FeedViewControl.ExtraFiltersContent>
             <StackPanel Orientation="Vertical">
                 <TextBlock Text="{DynamicResource LOCFriendsAchFeed_Feed_Label_Game}"
-                    Margin="0,0,0,2"
-                    Foreground="{DynamicResource TextBrushDarker}"
-                    FontSize="11" />
+                           Margin="0,0,0,2"
+                           Foreground="{DynamicResource TextBrushDarker}"
+                           FontSize="11" />
 
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />    <!-- Combo -->
-                        <ColumnDefinition Width="30" />   <!-- Fixed clear area -->
+                        <ColumnDefinition Width="*" />
+                        <!-- Combo -->
+                        <ColumnDefinition Width="30" />
+                        <!-- Fixed clear area -->
                     </Grid.ColumnDefinitions>
 
                     <ComboBox Grid.Column="0"
-                            ItemsSource="{Binding GameFilters}"
-                            Text="{Binding GameSearchText, UpdateSourceTrigger=PropertyChanged}"
-                            IsEditable="True"
-                            IsTextSearchEnabled="True"
-                            Height="28"
-                            Padding="8,2,8,2"
-                            HorizontalAlignment="Stretch" />
+                              ItemsSource="{Binding GameFilters}"
+                              Text="{Binding GameSearchText, UpdateSourceTrigger=PropertyChanged}"
+                              IsEditable="True"
+                              IsTextSearchEnabled="True"
+                              Height="28"
+                              Padding="8,2,8,2"
+                              HorizontalAlignment="Stretch" />
 
                     <Button Grid.Column="1"
                             Content="×"
@@ -59,11 +61,5 @@
                 </Grid>
             </StackPanel>
         </shared:FeedViewControl.ExtraFiltersContent>
-        <shared:FeedViewControl.ExtraRebuildContent>
-            <Button Content="{DynamicResource LOCFriendsAchFeed_Feed_Button_Quick}"
-                FontSize="12"
-                ToolTip="{DynamicResource LOCFriendsAchFeed_Feed_Button_Quick_Tooltip}"
-                Command="{Binding QuickScanCommand}" />
-        </shared:FeedViewControl.ExtraRebuildContent>
     </shared:FeedViewControl>
 </controls:PluginUserControl>

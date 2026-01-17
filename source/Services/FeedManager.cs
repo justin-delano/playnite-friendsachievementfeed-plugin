@@ -157,14 +157,14 @@ namespace FriendsAchievementFeed.Services
             };
         }
 
-        private static CacheScanOptions SingleGameOptions(Guid playniteGameId)
+        private static CacheScanOptions SingleGameOptions(Guid playniteGameId, bool withOwnersOnly)
         {
             return new CacheScanOptions
             {
                 IncludeSelf = false,
                 IncludeFriends = true,
                 PlayniteGameIds = new[] { playniteGameId },
-                ExplicitAppsAllowUnownedDiscovery = true
+                ExplicitAppsAllowUnownedDiscovery = !withOwnersOnly
             };
         }
 
@@ -240,21 +240,14 @@ namespace FriendsAchievementFeed.Services
 
             try
             {
-                try
+                var (authSuccess, authMessage) = await TestSteamAuthAsync().ConfigureAwait(false);
+                if (!authSuccess)
                 {
-                    // Force cookie refresh on every rebuild to ensure fresh Steam authentication
-                    await _steam.RefreshCookiesAsync(cts.Token, force: true).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw; // Re-throw cancellation to outer handler
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Debug(ex, "[FAF] Pre-scan cookie refresh failed (continuing anyway).");
+                    _logger.Warn($"[FAF] Steam auth failed before rebuild: {authMessage}");
+                    throw new Exception(StringResources.GetString("LOCFriendsAchFeed_Error_SteamNotConfigured"));
                 }
 
-                // Check for cancellation after cookie refresh completes
+                // Check for cancellation after auth completes
                 cts.Token.ThrowIfCancellationRequested();
 
                 var payload = await runner(cts.Token).ConfigureAwait(false);
@@ -273,7 +266,7 @@ namespace FriendsAchievementFeed.Services
             catch (Exception ex)
             {
                 _logger?.Error(ex, errorLogMessage);
-                var msg = StringResources.GetString("LOCFriendsAchFeed_Error_FailedRebuild");
+                var msg = ex.Message;
                 _lastStatus = msg;
                 Report(msg, 0, 1);
             }
@@ -308,12 +301,12 @@ namespace FriendsAchievementFeed.Services
                 errorLogMessage: StringResources.GetString("LOCFriendsAchFeed_Error_ManagedRebuild"));
         }
 
-        public Task StartManagedSingleGameScanAsync(Guid playniteGameId)
+        public Task StartManagedSingleGameScanAsync(Guid playniteGameId, bool withOwnersOnly, CancellationToken cancel)
         {
             var gameName = _api?.Database?.Games?.Get(playniteGameId)?.Name ?? playniteGameId.ToString();
 
             return RunManagedAsync(
-                runner: ct => _rebuildService.ScanAsync(SingleGameOptions(playniteGameId), HandleUpdate, ct),
+                runner: ct => _rebuildService.ScanAsync(SingleGameOptions(playniteGameId, withOwnersOnly), HandleUpdate, ct),
                 finalMessage: payload =>
                 {
                     var s = payload?.Summary;
@@ -375,10 +368,26 @@ namespace FriendsAchievementFeed.Services
             var raw = allEntries
                 .Where(e => e != null && e.AppId == appId && e.PlayniteGameId == game.Id)
                 .OrderByDescending(e => e.FriendUnlockTimeUtc)
-                .Take(_settings.MaxFeedItems)
+                .ToList();
+            
+            var hydrated = _hydrator.HydrateForUi(raw, cancel) ?? new List<FeedEntry>();
+
+            var hideLocked = _settings?.HideAchievementsLockedForSelf ?? false;
+            foreach (var entry in hydrated)
+            {
+                if (entry != null)
+                {
+                    entry.HideAchievementsLockedForSelf = hideLocked;
+                }
+            }
+            
+            // Re-sort by the UI-specific DateTime property after hydration, as the original code did.
+            var sorted = hydrated
+                .OrderByDescending(e => e.FriendUnlockTime)
+                .ThenByDescending(e => e.Id, StringComparer.Ordinal)
                 .ToList();
 
-            return Task.FromResult(_hydrator.HydrateForUi(raw, cancel) ?? new List<FeedEntry>());
+            return Task.FromResult(sorted);
         }
 
         public Task<List<FeedEntry>> BuildGlobalFeedAsync(CancellationToken cancel)
@@ -386,10 +395,26 @@ namespace FriendsAchievementFeed.Services
             var allEntries = GetAllCachedFriendEntries();
             var raw = allEntries
                 .OrderByDescending(e => e.FriendUnlockTimeUtc)
-                .Take(_settings.MaxFeedItems)
                 .ToList();
 
-            return Task.FromResult(_hydrator.HydrateForUi(raw, cancel) ?? new List<FeedEntry>());
+            var hydrated = _hydrator.HydrateForUi(raw, cancel) ?? new List<FeedEntry>();
+
+            var hideLocked = _settings?.HideAchievementsLockedForSelf ?? false;
+            foreach (var entry in hydrated)
+            {
+                if (entry != null)
+                {
+                    entry.HideAchievementsLockedForSelf = hideLocked;
+                }
+            }
+
+            // Re-sort by the UI-specific DateTime property after hydration.
+            var sorted = hydrated
+                .OrderByDescending(e => e.FriendUnlockTime)
+                .ThenByDescending(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+
+            return Task.FromResult(sorted);
         }
 
         public bool GameHasFeedEntries(string gameName)

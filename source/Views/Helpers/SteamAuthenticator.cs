@@ -32,29 +32,24 @@ namespace FriendsAchievementFeed.Views.Helpers
             }
         }
 
-        public async Task<string> CheckAuthAsync(bool diskOnly, CancellationToken token)
+        public async Task<string> CheckAuthAsync(CancellationToken token)
         {
             try
             {
-                await _steam.RefreshCookiesHeadlessAsync(token).ConfigureAwait(false);
-
                 var self = await _steam.GetSelfSteamId64Async(token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(self))
                     return SteamStatusProvider.NotAuthenticated();
 
-                if (diskOnly)
-                    return SteamStatusProvider.SessionFound(self);
+                var probe = await _steam.ProbeLoggedInAsync(token).ConfigureAwait(false);
 
-                var page = await _steam.GetProfilePageAsync(self, token).ConfigureAwait(false);
+                // Optional debug:
+                _logger?.Debug($"[FAF] Auth probe FinalUrl={probe.FinalUrl} LoggedIn={probe.IsLoggedIn}");
 
-                if ((int)page.StatusCode == 429)
-                    return SteamStatusProvider.AuthMessage("Rate-limited (429). Try again later.");
+                // If your probe returns an "empty/no response" flag instead, use that here.
+                if (string.IsNullOrWhiteSpace(probe.FinalUrl))
+                    return SteamStatusProvider.AuthMessage("No response from Steam (network issue?).");
 
-                var html = page?.Html ?? "";
-                if (string.IsNullOrWhiteSpace(html))
-                    return SteamStatusProvider.AuthMessage("No profile returned (network issue?).");
-
-                if (SteamClient.LooksLoggedOutHeader(html))
+                if (!probe.IsLoggedIn)
                     return SteamStatusProvider.AuthMessage("Saved cookies appear logged out. Click Authenticate.");
 
                 return SteamStatusProvider.AuthMessage($"Auth OK (SteamID {self}).");

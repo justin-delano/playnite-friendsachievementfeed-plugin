@@ -46,9 +46,6 @@ namespace FriendsAchievementFeed.Services
         private string GetApiKeyTrimmed() => 
             _plugin?.Settings?.SteamApiKey?.Trim();
 
-        public Task<bool> RefreshCookiesAsync(CancellationToken cancel, bool force = false)
-            => _steam.RefreshCookiesHeadlessAsync(cancel, force);
-
         private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct) =>
             InputValidator.IsValidSteamId64(steamIdMaybe)
                 ? steamIdMaybe.Trim()
@@ -124,39 +121,33 @@ namespace FriendsAchievementFeed.Services
             {
                 var resolved = await ResolveSteamId64Async(steamUserId, CancellationToken.None).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(resolved))
-                    return (false, Loc("LOCFriendsAchFeed_Error_SteamSessionNotFound"));
-
-                var page = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
-                var check = CheckProfilePage(page);
-
-                if (check.IsRateLimited)
-                    return (false, Loc("LOCFriendsAchFeed_Error_SteamRateLimited"));
-                if (check.IsEmpty)
-                    return (false, Loc("LOCFriendsAchFeed_Error_NoProfileReturned"));
-
-                if (check.IsLoggedOut)
                 {
-                    await _steam.RefreshCookiesHeadlessAsync(CancellationToken.None).ConfigureAwait(false);
-                    page = await _steam.GetProfilePageAsync(resolved, CancellationToken.None).ConfigureAwait(false);
-                    check = CheckProfilePage(page);
-
-                    if (check.IsRateLimited)
-                        return (false, Loc("LOCFriendsAchFeed_Error_SteamRateLimited"));
-                    if (check.IsEmpty || check.IsLoggedOut)
-                        return (false, Loc("LOCFriendsAchFeed_Error_SteamCookiesInvalid"));
+                    // This case can happen if the user is not logged into Steam via Playnite at all.
+                    return (false, Loc("LOCFriendsAchFeed_Error_SteamSessionNotFound"));
                 }
 
-                var html = page?.Html ?? string.Empty;
-                if (html.IndexOf("actual_persona_name", StringComparison.OrdinalIgnoreCase) < 0)
-                    return (false, Loc("LOCFriendsAchFeed_Error_SteamProfileMarkersNotFound"));
+                // ProbeLoggedInAsync is now the single source of truth.
+                // Its internal logic in SteamClient will attempt to refresh cookies if the first check fails.
+                // We only need to call it once and trust its result.
+                var (isLoggedIn, _) = await _steam.ProbeLoggedInAsync(CancellationToken.None).ConfigureAwait(false);
 
-                return (true, Loc("LOCFriendsAchFeed_Settings_SteamAuth_OK", "Steam auth OK"));
+                if (isLoggedIn)
+                {
+                    return (true, Loc("LOCFriendsAchFeed_Settings_SteamAuth_OK", "Steam auth OK"));
+                }
+                else
+                {
+                    // The probe already tried to refresh and failed, so the cookies are genuinely invalid.
+                    return (false, Loc("LOCFriendsAchFeed_Error_SteamCookiesInvalid"));
+                }
             }
             catch (Exception ex)
             {
+                _logger?.Error(ex, "Steam auth test failed with an exception.");
                 return (false, ex.Message);
             }
         }
+
 
         // ---------------------------------------------------------------------
         // Achievements scraping – classification
@@ -262,16 +253,13 @@ namespace FriendsAchievementFeed.Services
             var requested = BuildAchievementsUrl(resolved, appId);
             res.RequestedUrl = requested;
 
-            async Task<(SteamClient.SteamPageResult Page, string Html)> FetchAsync()
-            {
-                var page = await _steam.GetAchievementsPageAsync(resolved, appId, cancel).ConfigureAwait(false);
-                var html = page?.Html ?? string.Empty;
-                return (page, html);
-            }
-
-            var (page1, html1) = await FetchAsync().ConfigureAwait(false);
-            res.StatusCode = page1 != null ? (int)page1.StatusCode : 0;
-            res.FinalUrl = page1?.FinalUrl ?? requested;
+            // The underlying GetAchievementsPageAsync -> GetSteamPageAsync now handles
+            // the reactive cookie refresh and retry logic automatically. We just call it once.
+            var page = await _steam.GetAchievementsPageAsync(resolved, appId, cancel).ConfigureAwait(false);
+            var html = page?.Html ?? string.Empty;
+            
+            res.StatusCode = page != null ? (int)page.StatusCode : 0;
+            res.FinalUrl = page?.FinalUrl ?? requested;
 
             if (res.StatusCode == 429)
             {
@@ -280,11 +268,12 @@ namespace FriendsAchievementFeed.Services
                 return res;
             }
 
-            // CRITICAL FIX: Only trigger refresh if we are definitively logged out AND it's not a private profile
-            if (LooksLoggedOutHeuristic(html1, res.FinalUrl))
+            // After the single attempt (which includes an automatic retry), if we're still
+            // logged out, the session is definitively invalid.
+            if (LooksLoggedOutHeuristic(html, res.FinalUrl))
             {
-                // Double check it isn't just private
-                if (LooksPrivateOrUnavailable(html1, out var reason))
+                // Double check it isn't just private, which can be misidentified as logged out.
+                if (LooksPrivateOrUnavailable(html, out var reason))
                 {
                      res.TransientFailure = false;
                      res.StatsUnavailable = true;
@@ -292,33 +281,12 @@ namespace FriendsAchievementFeed.Services
                      return res;
                 }
 
-                _logger?.Warn($"[FAF] Detected logout on {requested}. Refreshing cookies...");
-                await _steam.RefreshCookiesHeadlessAsync(cancel).ConfigureAwait(false);
-
-                var (page2, html2) = await FetchAsync().ConfigureAwait(false);
-                res.StatusCode = page2 != null ? (int)page2.StatusCode : 0;
-                res.FinalUrl = page2?.FinalUrl ?? requested;
-
-                if (res.StatusCode == 429)
-                {
-                    res.TransientFailure = true;
-                    res.Detail = "429_after_refresh";
-                    return res;
-                }
-
-                if (LooksLoggedOutHeuristic(html2, res.FinalUrl))
-                {
-                    res.TransientFailure = true;
-                    res.Detail = "cookies_bad_after_refresh";
-                    return res;
-                }
-
-                var r2 = ClassifyScrapeOrPrivate(res, html2, includeLocked);
-                await MaybeClassifyNoAchievementsBySchemaAsync(r2, appId, cancel).ConfigureAwait(false);
-                return r2;
+                res.TransientFailure = true;
+                res.Detail = "cookies_bad_after_refresh";
+                return res;
             }
 
-            if (page1?.WasRedirected == true && !IsStatsForApp(res.FinalUrl))
+            if (page?.WasRedirected == true && !IsStatsForApp(res.FinalUrl))
             {
                 res.StatsUnavailable = true;
                 res.Detail = "redirect_off_stats";
@@ -326,9 +294,10 @@ namespace FriendsAchievementFeed.Services
                 return res;
             }
 
-            var r1 = ClassifyScrapeOrPrivate(res, html1, includeLocked);
-            await MaybeClassifyNoAchievementsBySchemaAsync(r1, appId, cancel).ConfigureAwait(false);
-            return r1;
+            // If we've made it this far, we are logged in and can classify the page content.
+            var result = ClassifyScrapeOrPrivate(res, html, includeLocked);
+            await MaybeClassifyNoAchievementsBySchemaAsync(result, appId, cancel).ConfigureAwait(false);
+            return result;
         }
 
         private async Task MaybeClassifyNoAchievementsBySchemaAsync(AchievementsHealthResult res, int appId, CancellationToken ct)

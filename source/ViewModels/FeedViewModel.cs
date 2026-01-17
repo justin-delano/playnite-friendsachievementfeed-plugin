@@ -28,8 +28,6 @@ namespace FriendsAchievementFeed.ViewModels
 
         // Debounce token for filter refresh
         private CancellationTokenSource _filterCts;
-        private CancellationTokenSource _cacheReloadCts;
-        private CancellationTokenSource _reapplyCts;
 
         // Track revealed entries
         private readonly HashSet<string> _revealedEntryIds = new HashSet<string>(StringComparer.Ordinal);
@@ -174,6 +172,27 @@ namespace FriendsAchievementFeed.ViewModels
 
         #region Methods
 
+        public void ClearFeed()
+        {
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            Action updateAction = () =>
+            {
+                AllEntries.Clear();
+                GroupedEntries.Clear();
+                OnPropertyChanged(nameof(HasAnyEntries));
+                StatusMessage = StringResources.GetString("LOCFriendsAchFeed_Status_LoadingFromCache");
+            };
+
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                dispatcher.Invoke(updateAction);
+            }
+            else
+            {
+                updateAction();
+            }
+        }
+
         private void QueueRefreshView()
         {
             // Cancel any previous filter operation
@@ -216,44 +235,43 @@ namespace FriendsAchievementFeed.ViewModels
         {
             try
             {
-                // Apply filter to AllEntries and rebuild groups
+                // Apply filter to AllEntries and rebuild groups in a temporary collection
                 var filtered = AllEntries.Where(e => _filter.Matches(e)).ToList();
-                
-                // Clear and rebuild GroupedEntries
-                GroupedEntries.Clear();
-                
-                // Build groups using the same logic as the original
                 var showGameInHeader = true; // For global view
-                var groups = FeedGroupingBuilder.BuildGroups(filtered, showGameInHeader, DateTimeUtilities.AsLocalFromUtc);
-                
-                foreach (var g in groups)
+                var newGroups = FeedGroupingBuilder.BuildGroups(filtered, showGameInHeader, DateTimeUtilities.AsLocalFromUtc);
+
+                // Update GroupedEntries on the UI thread
+                var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                Action updateAction = () =>
                 {
-                    GroupedEntries.Add(g);
-                }
-                
-                // Update status message with count
-                var totalCount = AllEntries.Count;
-                if (totalCount > 0)
-                {
-                    var countText = $"Showing {filtered.Count} of {totalCount}";
-                    
-                    // Preserve base status if it's meaningful (not empty, not "Idle", not already a count)
-                    var baseStatus = StatusMessage?.Split('|')[0].Trim() ?? string.Empty;
-                    var idleText = StringResources.GetString("LOCFriendsAchFeed_Status_Idle") ?? "Idle";
-                    
-                    if (!string.IsNullOrEmpty(baseStatus) && 
-                        !baseStatus.Equals(idleText, StringComparison.OrdinalIgnoreCase) &&
-                        !baseStatus.StartsWith("Showing ", StringComparison.OrdinalIgnoreCase))
+                    GroupedEntries.Clear();
+                    foreach (var g in newGroups)
                     {
-                        StatusMessage = $"{baseStatus} | {countText}";
+                        GroupedEntries.Add(g);
+                    }
+
+                    // Update status message with count
+                    var totalCount = AllEntries.Count;
+                    if (totalCount > 0)
+                    {
+                        StatusMessage = $"Showing {filtered.Count} of {totalCount}";
                     }
                     else
                     {
-                        StatusMessage = countText;
+                        StatusMessage = StringResources.GetString("LOCFriendsAchFeed_Status_Idle") ?? "Idle";
                     }
+
+                    OnPropertyChanged(nameof(HasAnyEntries));
+                };
+
+                if (dispatcher != null && !dispatcher.CheckAccess())
+                {
+                    dispatcher.Invoke(updateAction);
                 }
-                
-                OnPropertyChanged(nameof(HasAnyEntries));
+                else
+                {
+                    updateAction();
+                }
             }
             catch (Exception ex)
             {
@@ -302,32 +320,41 @@ namespace FriendsAchievementFeed.ViewModels
 
         public void UpdateCacheData(List<FeedEntry> entries, HashSet<string> defaultVisibleIds = null)
         {
+            // Prepare new data in the background
             _rawCachedEntries = entries ?? new List<FeedEntry>();
-            
-            // Set the default visible IDs filter
             _filter.DefaultVisibleIds = defaultVisibleIds;
-            
-            // Update AllEntries and apply filters
-            AllEntries.Clear();
-            foreach (var entry in _rawCachedEntries)
-            {
-                if (entry != null)
-                {
-                    AllEntries.Add(entry);
-                }
-            }
-            
-            // Rebuild filter lists when entries change
-            RebuildFilterLists();
-            
-            // Refresh view on UI thread
+
+            // Update AllEntries without clearing it first to avoid flicker
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
             if (dispatcher != null && !dispatcher.CheckAccess())
             {
-                dispatcher.Invoke(RefreshView);
+                dispatcher.Invoke(() =>
+                {
+                    AllEntries.Clear();
+                    foreach (var entry in _rawCachedEntries)
+                    {
+                        if (entry != null)
+                        {
+                            AllEntries.Add(entry);
+                        }
+                    }
+
+                    RebuildFilterLists();
+                    RefreshView();
+                });
             }
             else
             {
+                AllEntries.Clear();
+                foreach (var entry in _rawCachedEntries)
+                {
+                    if (entry != null)
+                    {
+                        AllEntries.Add(entry);
+                    }
+                }
+                
+                RebuildFilterLists();
                 RefreshView();
             }
         }
@@ -367,54 +394,27 @@ namespace FriendsAchievementFeed.ViewModels
             }
         }
 
-        private void RegisterReveal(string id)
+        private void RegisterReveal(string entryId)
         {
-            if (string.IsNullOrEmpty(id)) return;
-            lock (_revealedLock) { _revealedEntryIds.Add(id); }
+            lock (_revealedLock)
+            {
+                _revealedEntryIds.Add(entryId);
+            }
         }
 
-        private void UnregisterReveal(string id)
+        private void UnregisterReveal(string entryId)
         {
-            if (string.IsNullOrEmpty(id)) return;
-            lock (_revealedLock) { _revealedEntryIds.Remove(id); }
+            lock (_revealedLock)
+            {
+                _revealedEntryIds.Remove(entryId);
+            }
         }
-
-        #endregion
 
         public void Dispose()
         {
-            try
-            {
-                _filterCts?.Cancel();
-                _filterCts?.Dispose();
-                _filterCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing filter cancellation token.");
-            }
-
-            try
-            {
-                _cacheReloadCts?.Cancel();
-                _cacheReloadCts?.Dispose();
-                _cacheReloadCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing cache reload cancellation token.");
-            }
-
-            try
-            {
-                _reapplyCts?.Cancel();
-                _reapplyCts?.Dispose();
-                _reapplyCts = null;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error disposing reapply cancellation token.");
-            }
+            // Cleanup if necessary
         }
+
+        #endregion
     }
 }

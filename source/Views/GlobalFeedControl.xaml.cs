@@ -18,14 +18,33 @@ namespace FriendsAchievementFeed.Views
             IPlayniteAPI api,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
-            FeedManager feedService)
+            FeedManager feedService,
+            FeedControlLogic logic)
         {
-            _logic = new FeedControlLogic(api, settings, feedService);
+            _logic = logic;
             InitializeComponent();
             MainControl.Logic = _logic;
-            MainControl.DisposeLogicOnUnload = true;
+            MainControl.DisposeLogicOnUnload = false;
             DataContext = _logic;
+            Loaded += GlobalFeedControl_Loaded;
         }
+
+        private void GlobalFeedControl_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (_logic == null) return;
+
+            // When switching to global view, ensure game context is cleared
+            _logic.GameNameProvider = null;
+            _logic.GameIdProvider = null;
+            _logic.NotifyCommandsChanged();
+            _logic.SetViewContext(isGameView: false);
+
+            _logic.ClearFeed();
+
+            // Refresh to show global feed
+            _ = _logic.RefreshAsync();
+        }
+
         private void GameClearButton_Click(object sender, RoutedEventArgs e)
         {
             var vm = MainControl?.Logic;

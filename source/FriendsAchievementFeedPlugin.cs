@@ -30,6 +30,7 @@ namespace FriendsAchievementFeed
         private readonly NotificationPublisher _notifications;
 
         private readonly BackgroundUpdater _backgroundUpdates;
+        public FeedControlLogic SharedFeedControlLogic { get; private set; }
 
         // Startup gate: ensure SteamID64 persistence happens BEFORE anything else.
         private readonly object _startupInitLock = new object();
@@ -54,6 +55,9 @@ namespace FriendsAchievementFeed
             _feedService = new FeedManager(api, _settings, _logger, this);
             _notifications = new NotificationPublisher(api, _settings, _logger);
             _backgroundUpdates = new BackgroundUpdater(_feedService, _settings, _logger, _notifications, UpdateGameFeedGroupsForCurrentGame);
+
+            SharedFeedControlLogic = new FeedControlLogic(PlayniteApi, _settings, _feedService);
+
             // Theme integration
             AddCustomElementSupport(new AddCustomElementSupportArgs
             {
@@ -75,7 +79,7 @@ namespace FriendsAchievementFeed
         {
             if (args.Name == "GameFeedTab")
             {
-                var control = new GameFeedControl(PlayniteApi, _settings, _logger, _feedService);
+                var control = new GameFeedControl(PlayniteApi, _settings, _logger, _feedService, SharedFeedControlLogic);
                 control.ApplyGameViewLayout();
                 return control;
             }
@@ -128,7 +132,7 @@ namespace FriendsAchievementFeed
 
         private void ShowGameFeedWindow(Game game)
         {
-            var view = new GameFeedControl(PlayniteApi, _settings, _logger, _feedService, game);
+            var view = new GameFeedControl(PlayniteApi, _settings, _logger, _feedService, SharedFeedControlLogic, game);
 
             var windowOptions = new WindowOptions
             {
@@ -160,7 +164,7 @@ namespace FriendsAchievementFeed
                 Icon = GetSidebarIcon(),
                 Opened = () => new ContentControl
                 {
-                    Content = new GlobalFeedControl(PlayniteApi, _settings, _logger, _feedService)
+                    Content = new GlobalFeedControl(PlayniteApi, _settings, _logger, _feedService, SharedFeedControlLogic)
                 }
             };
         }
@@ -394,7 +398,7 @@ namespace FriendsAchievementFeed
                 try
                 {
                     _logger.Info($"[FAF] Detected new Steam game '{game?.Name}' ({game?.GameId}); starting single-game scan.");
-                    await _feedService.StartManagedSingleGameScanAsync(game.Id).ConfigureAwait(false);
+                    await _feedService.StartManagedSingleGameScanAsync(game.Id, false, CancellationToken.None).ConfigureAwait(false);
                     UpdateGameFeedGroupsFlag(game);
                 }
                 catch (Exception ex)

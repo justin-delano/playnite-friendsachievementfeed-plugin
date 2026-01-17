@@ -51,21 +51,10 @@ namespace FriendsAchievementFeed.Controllers
         private AsyncCommand _singleGameScanCmd;
         private AsyncCommand _quickScanCmd;
 
-        // One-shot dialog throttling (avoid popup spam)
-        private DateTime _lastAuthDialogUtc = DateTime.MinValue;
-        private static readonly TimeSpan AuthDialogCooldown = TimeSpan.FromSeconds(5);
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-
-        private bool SetField<T>(ref T field, T value, [CallerMemberName] string propertyName = null)
-        {
-            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-            field = value;
-            OnPropertyChanged(propertyName);
-            return true;
-        }
 
         public FeedController(IPlayniteAPI api, FriendsAchievementFeedSettings settings, FeedManager feedService)
         {
@@ -127,6 +116,9 @@ namespace FriendsAchievementFeed.Controllers
 
         // MUST be assignable because initialized in InitializePerGame()
         public ICommand RefreshCurrentGameCommand { get; private set; }
+        public ICommand RefreshCurrentGameWithOwnersCommand { get; private set; }
+
+        // MUST be assignable because initialized in InitializeQuickScan()
         public ICommand QuickScanCommand { get; private set; }
 
         #endregion
@@ -162,8 +154,6 @@ namespace FriendsAchievementFeed.Controllers
         {
             _refreshRequested = true;
 
-            // If a refresh is already running, we just set the flag and exit. 
-            // The existing running task will pick up the flag in the while() loop.
             if (_refreshLock.CurrentCount == 0) return;
 
             await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -174,71 +164,36 @@ namespace FriendsAchievementFeed.Controllers
                     _refreshRequested = false;
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    // _logger?.Debug("Refreshing feed from controller"); // Changed to Debug or removed
-
                     var viewModel = ViewModelProvider?.Invoke();
-                    if (viewModel == null)
-                    {
-                        // _logger?.Debug("No view model available to refresh");
-                        return;
-                    }
+                    if (viewModel == null) return;
                     
-                    // Load from cache and hydrate for UI (Heavy work on ThreadPool)
-                    var entries = await Task.Run(() =>
-                    {
-                        var gameName = GetGameNameForFilter();
-                        var rawEntries = LoadRawFriendEntriesFromCache(gameName);
-                        var hydrated = _hydrator.HydrateForUi(rawEntries, cancellationToken);
-                        
-                        // Sort by unlock time
-                        return hydrated
-                            .Where(e => e != null)
-                            .OrderByDescending(e => e.FriendUnlockTime)
-                            .ThenByDescending(e => e.Id, StringComparer.Ordinal)
-                            .ToList();
-                    }, cancellationToken).ConfigureAwait(true); // Continue on captured context (likely UI thread if called from UI)
+                    var gameId = GameIdProvider?.Invoke();
+                    var game = gameId.HasValue ? _api.Database.Games.Get(gameId.Value) : null;
                     
-                    // Compute default visible IDs
+                    var entries = game != null
+                        ? await _feedService.BuildGameFeedAsync(game, cancellationToken).ConfigureAwait(false)
+                        : await _feedService.BuildGlobalFeedAsync(cancellationToken).ConfigureAwait(false);
+
                     var maxItems = (_settings?.MaxFeedItems > 0) ? _settings.MaxFeedItems : 25;
-                    HashSet<string> defaultVisibleIds = null;
-                    if (entries.Count > maxItems)
-                    {
-                        defaultVisibleIds = new HashSet<string>(
-                            entries.Take(maxItems)
-                                .Select(x => x?.Id)
-                                .Where(id => !string.IsNullOrEmpty(id)),
-                            StringComparer.Ordinal);
-                    }
+                    var defaultVisibleIds = new HashSet<string>(
+                        entries.Take(maxItems)
+                            .Select(x => x?.Id)
+                            .Where(id => !string.IsNullOrEmpty(id)),
+                        StringComparer.Ordinal);
                     
-                    // Update View Model on UI Thread
                     await _api.MainView.UIDispatcher.InvokeAsync(() =>
                     {
-                        var hideLocked = _settings?.HideAchievementsLockedForSelf ?? false;
-                        foreach (var entry in entries)
-                        {
-                            if (entry != null)
-                            {
-                                entry.HideAchievementsLockedForSelf = hideLocked;
-                            }
-                        }
-                        
                         viewModel.UpdateCacheData(entries, defaultVisibleIds);
                         
                         var updated = _feedService.Cache.GetFriendFeedLastUpdatedUtc();
                         viewModel.CacheLastUpdatedText = updated?.ToLocalTime().ToString("g") 
                             ?? StringResources.GetString("LOCFriendsAchFeed_Status_Never");
-                    }, DispatcherPriority.Background);
-                    
-                    // _logger?.Debug($"Loaded {entries.Count} entries from cache"); // Changed to Debug
+                    }, DispatcherPriority.DataBind);
 
-                    // Small debounce delay if another request came in immediately
                     if (_refreshRequested) await Task.Delay(50, cancellationToken);
                 }
             }
-            catch (OperationCanceledException) 
-            { 
-                // Ignore cancellations
-            }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 _logger?.Error(ex, "Failed to refresh feed");
@@ -249,21 +204,6 @@ namespace FriendsAchievementFeed.Controllers
             }
         }
         
-        private List<FeedEntry> LoadRawFriendEntriesFromCache(string gameName = null)
-        {
-            var all = _feedService.Cache.GetCachedFriendEntries() ?? new List<FeedEntry>();
-
-            if (string.IsNullOrWhiteSpace(gameName))
-            {
-                return all.OrderByDescending(e => e.FriendUnlockTimeUtc).ToList();
-            }
-
-            return all
-                .Where(e => string.Equals(e.GameName, gameName, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(e => e.FriendUnlockTimeUtc)
-                .ToList();
-        }
-
         private async Task CancelRebuildAsync(CancellationToken cancellationToken)
         {
             _logger?.Info("Canceling rebuild from controller");
@@ -362,6 +302,7 @@ namespace FriendsAchievementFeed.Controllers
             _refreshCmd?.RaiseCanExecuteChanged();
             _cancelRebuildCmd?.RaiseCanExecuteChanged();
             _singleGameScanCmd?.RaiseCanExecuteChanged();
+            (RefreshCurrentGameWithOwnersCommand as AsyncCommand)?.RaiseCanExecuteChanged();
             _quickScanCmd?.RaiseCanExecuteChanged();
         }
 
@@ -372,10 +313,15 @@ namespace FriendsAchievementFeed.Controllers
         private void InitializePerGame()
         {
             _singleGameScanCmd = new AsyncCommand(
-                async _ => await TriggerSingleGameScanAsync(default).ConfigureAwait(false),
+                async _ => await TriggerSingleGameScanAsync(default, false).ConfigureAwait(false),
+                _ => CanTriggerSingleGameScan());
+
+            var singleGameScanWithOwnersCmd = new AsyncCommand(
+                async _ => await TriggerSingleGameScanAsync(default, true).ConfigureAwait(false),
                 _ => CanTriggerSingleGameScan());
 
             RefreshCurrentGameCommand = _singleGameScanCmd;
+            RefreshCurrentGameWithOwnersCommand = singleGameScanWithOwnersCmd;
         }
 
         private void InitializeQuickScan()
@@ -387,7 +333,7 @@ namespace FriendsAchievementFeed.Controllers
             QuickScanCommand = _quickScanCmd;
         }
 
-        private async Task TriggerSingleGameScanAsync(CancellationToken cancellationToken)
+        private async Task TriggerSingleGameScanAsync(CancellationToken cancellationToken, bool includeOwners)
         {
             try
             {
@@ -398,9 +344,8 @@ namespace FriendsAchievementFeed.Controllers
                     return;
                 }
 
-                _logger?.Info($"Triggering single game scan for game {gameId}");
-                // For single game scan, start a managed rebuild with null options
-                await _feedService.StartManagedRebuildAsync(null).ConfigureAwait(false);
+                _logger?.Info($"Triggering single game scan for game {gameId} (withOwnersOnly: {includeOwners})");
+                await _feedService.StartManagedSingleGameScanAsync(gameId.Value, includeOwners, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

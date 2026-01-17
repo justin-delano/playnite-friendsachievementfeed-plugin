@@ -10,14 +10,6 @@
                             d:DesignWidth="800">
 
     <shared:FeedViewControl x:Name="MainControl"
-                            ShowGameName="False">
-        <shared:FeedViewControl.ExtraRebuildContent>
-            <Button
-                Content="Discover"
-                FontSize="12"
-                ToolTip="Refresh achievements for this game across all friends, independent of ownership."
-                Command="{Binding RefreshCurrentGameCommand}" />
-        </shared:FeedViewControl.ExtraRebuildContent>
-    </shared:FeedViewControl>
+                            ShowGameName="False" />
 
 </controls:PluginUserControl>

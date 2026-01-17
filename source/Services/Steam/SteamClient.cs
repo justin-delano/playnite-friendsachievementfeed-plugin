@@ -186,15 +186,13 @@ namespace FriendsAchievementFeed.Services
 
         private bool HasCookiesInJar()
         {
+            bool Has(CookieCollection cc) =>
+                cc.Cast<Cookie>().Any(c => c.Name.Equals("steamLoginSecure", StringComparison.OrdinalIgnoreCase));
+
             try
             {
-                var cookies = _cookieJar.GetCookies(CommunityBase);
-                foreach (Cookie c in cookies)
-                {
-                    if (c.Name.Equals("steamLoginSecure", StringComparison.OrdinalIgnoreCase))
-                        return true;
-                }
-                return false;
+                return Has(_cookieJar.GetCookies(CommunityBase))
+                    || Has(_cookieJar.GetCookies(StoreBase));
             }
             catch { return false; }
         }
@@ -247,13 +245,20 @@ namespace FriendsAchievementFeed.Services
         // Profile / Achievements
         // ---------------------------------------------------------------------
 
-        public Task<SteamPageResult> GetProfilePageAsync(string steamId64, CancellationToken ct)
-            => GetSteamPageAsync($"https://steamcommunity.com/profiles/{steamId64}/?l=english", true, ct);
-
-        public async Task<string> GetProfileHtmlAsync(string steamId64, CancellationToken ct)
+        public async Task<(bool IsLoggedIn, string FinalUrl)> ProbeLoggedInAsync(CancellationToken ct)
         {
-            var page = await GetProfilePageAsync(steamId64, ct).ConfigureAwait(false);
-            return page?.Html ?? string.Empty;
+            var probeUrl = "https://steamcommunity.com/my/friends";
+            var res = await GetSteamPageAsync(probeUrl, requiresCookies: true, ct).ConfigureAwait(false);
+
+            var final = res?.FinalUrl ?? "";
+            if (string.IsNullOrWhiteSpace(final))
+                return (false, final);
+
+            var looksLikeLogin = final.IndexOf("/login", StringComparison.OrdinalIgnoreCase) >= 0
+                            || final.IndexOf("openid", StringComparison.OrdinalIgnoreCase) >= 0
+                            || final.IndexOf("login.steampowered.com", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            return (!looksLikeLogin, final);
         }
 
         public Task<SteamPageResult> GetAchievementsPageAsync(string steamId64, int appId, CancellationToken ct)
@@ -268,22 +273,14 @@ namespace FriendsAchievementFeed.Services
             var ids = steamIds?.Where(x => x > 0).Distinct().ToList() ?? new List<ulong>();
             if (ids.Count == 0) return new List<SteamPlayerSummaries>();
 
-            if (!string.IsNullOrWhiteSpace(apiKey))
+            if (string.IsNullOrWhiteSpace(apiKey))
             {
-                var apiResults = await _apiHelper.GetPlayerSummariesAsync(apiKey, ids, ct).ConfigureAwait(false);
-                if (apiResults.Count > 0) return apiResults;
+                _logger?.Warn("[FAF] An API key is required to fetch Steam friend data.");
+                return new List<SteamPlayerSummaries>();
             }
 
-            // Fallback to HTML
-            var results = new List<SteamPlayerSummaries>();
-            foreach (var id in ids)
-            {
-                ct.ThrowIfCancellationRequested();
-                var html = await GetProfileHtmlAsync(id.ToString(), ct).ConfigureAwait(false);
-                var p = SteamHtmlParser.TryParseProfileHtmlToSummary(id, html);
-                if (p != null) results.Add(p);
-            }
-            return results;
+            var apiResults = await _apiHelper.GetPlayerSummariesAsync(apiKey, ids, ct).ConfigureAwait(false);
+            return apiResults ?? new List<SteamPlayerSummaries>();
         }
 
         // ---------------------------------------------------------------------

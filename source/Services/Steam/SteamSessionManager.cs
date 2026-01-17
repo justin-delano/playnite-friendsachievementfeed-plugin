@@ -70,10 +70,6 @@ namespace FriendsAchievementFeed.Services
             });
         }
 
-        public bool HasSteamSessionCookies()
-        {
-            return SteamCookieManager.HasSteamSessionCookies(_api, _logger);
-        }
 
         public async Task<string> GetSelfSteamId64Async(CancellationToken ct)
         {

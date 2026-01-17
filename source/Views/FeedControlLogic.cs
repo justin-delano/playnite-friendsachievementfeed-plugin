@@ -6,6 +6,7 @@ using FriendsAchievementFeed.ViewModels;
 using FriendsAchievementFeed.Services;
 using FriendsAchievementFeed.Models;
 using Playnite.SDK;
+using System.Collections.ObjectModel;
 
 namespace FriendsAchievementFeed.Views
 {
@@ -138,6 +139,8 @@ namespace FriendsAchievementFeed.Views
             set => _viewModel.IncrementalRecentGamesPerFriend = value;
         }
 
+        public ObservableCollection<ButtonViewModel> ActionButtons { get; } = new ObservableCollection<ButtonViewModel>();
+
         #endregion
 
         #region Settings Properties
@@ -156,6 +159,7 @@ namespace FriendsAchievementFeed.Views
         public System.Windows.Input.ICommand RefreshCommand => _controller.RefreshCommand;
         public System.Windows.Input.ICommand CancelRebuildCommand => _controller.CancelRebuildCommand;
         public System.Windows.Input.ICommand RefreshCurrentGameCommand => _controller.RefreshCurrentGameCommand;
+        public System.Windows.Input.ICommand RefreshCurrentGameWithOwnersCommand => _controller.RefreshCurrentGameWithOwnersCommand;
         public System.Windows.Input.ICommand QuickScanCommand => _controller.QuickScanCommand;
 
         #endregion
@@ -174,6 +178,49 @@ namespace FriendsAchievementFeed.Views
 
         protected virtual string GetGameNameForFilter() => GameNameProvider?.Invoke();
         protected virtual Guid? GetGameIdForFilter() => GameIdProvider?.Invoke();
+
+        public void SetViewContext(bool isGameView)
+        {
+            ActionButtons.Clear();
+            if (isGameView)
+            {
+                ActionButtons.Add(new ButtonViewModel
+                {
+                    Content = "Discover",
+                    ToolTip = "Refresh achievements for this game across all friends, independent of ownership.",
+                    Command = _controller.RefreshCurrentGameCommand
+                });
+                ActionButtons.Add(new ButtonViewModel
+                {
+                    Content = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Refresh"),
+                    ToolTip = "Refresh achievements for this game across friends who own it.",
+                    Command = _controller.RefreshCurrentGameWithOwnersCommand
+                });
+            }
+            else
+            {
+                ActionButtons.Add(new ButtonViewModel
+                {
+                    Content = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Quick"),
+                    ToolTip = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Quick_Tooltip"),
+                    Command = _controller.QuickScanCommand
+                });
+                ActionButtons.Add(new ButtonViewModel
+                {
+                    Content = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Refresh"),
+                    ToolTip = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip"),
+                    Command = _controller.TriggerRebuildCommand
+                });
+            }
+
+            // Always add the Cancel button
+            ActionButtons.Add(new ButtonViewModel
+            {
+                Content = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Cancel"),
+                ToolTip = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip"),
+                Command = _controller.CancelRebuildCommand
+            });
+        }
 
         #endregion
 
@@ -221,6 +268,11 @@ namespace FriendsAchievementFeed.Views
         #endregion
 
         #region Public Methods
+
+        public void ClearFeed()
+        {
+            _viewModel.ClearFeed();
+        }
 
         public void UpdateCacheData(System.Collections.Generic.List<FriendsAchievementFeed.Models.FeedEntry> entries)
         {
