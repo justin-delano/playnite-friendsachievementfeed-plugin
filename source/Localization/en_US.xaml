@@ -15,6 +15,7 @@
     <!-- Steam auth -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamConnection">Steam Connection</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey">Steam Web API Key</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKeyHint">Get your API key from</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckSteamAuth">Check Steam Authentication</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">Authenticate (open browser)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckingSteamAuth">Checking Steam authentication...</sys:String>
@@ -60,8 +61,11 @@
     <!-- Feed controls -->
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh">Refresh 🔄</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip">Refresh Feed</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip_Owned">Refresh achievements for this game across friends who own it.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel">Cancel</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip">Cancel Running Rebuild</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Discover">Discover</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Discover_Tooltip">Refresh achievements for this game across all friends, independent of ownership.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick">Quick</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick_Tooltip">Update feed using only the newest achievements.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full">Full 🔄</sys:String>
@@ -82,6 +86,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Status_UpdatingCache">Updating cache...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_Entries">{0} entries</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_Never">Never</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Status_Idle">Idle</sys:String>
 
     <!-- Errors / validation -->
     <sys:String x:Key="LOCFriendsAchFeed_Error_FailedLoadFeed">Failed to load feed. See log for details.</sys:String>

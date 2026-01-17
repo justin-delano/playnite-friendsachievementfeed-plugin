@@ -26,13 +26,11 @@ namespace FriendsAchievementFeed.Services
         private readonly ConcurrentDictionary<string, Lazy<Task<Dictionary<int, int>>>> _ownedGamePlaytimeCache =
             new ConcurrentDictionary<string, Lazy<Task<Dictionary<int, int>>>>(StringComparer.OrdinalIgnoreCase);
 
-        public SteamDataProvider(IPlayniteAPI api, ILogger logger, FriendsAchievementFeedPlugin plugin, ICacheManager cacheManager)
+        public SteamDataProvider(ILogger logger, FriendsAchievementFeedPlugin plugin, SteamClient steamClient, ICacheManager cacheManager)
         {
             _logger = logger;
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
-
-            if (api == null) throw new ArgumentNullException(nameof(api));
-            _steam = new SteamClient(api, _logger, _plugin.GetPluginUserDataPath());
+            _steam = steamClient ?? throw new ArgumentNullException(nameof(steamClient));
         }
 
         public void Dispose()
@@ -49,7 +47,7 @@ namespace FriendsAchievementFeed.Services
         private async Task<string> ResolveSteamId64Async(string steamIdMaybe, CancellationToken ct) =>
             InputValidator.IsValidSteamId64(steamIdMaybe)
                 ? steamIdMaybe.Trim()
-                : (await _steam.GetSelfSteamId64Async(ct).ConfigureAwait(false))?.Trim();
+                : (await _steam.GetRequiredSelfSteamId64Async(ct).ConfigureAwait(false))?.Trim();
 
         // ---------------------------------------------------------------------
         // Owned games playtimes

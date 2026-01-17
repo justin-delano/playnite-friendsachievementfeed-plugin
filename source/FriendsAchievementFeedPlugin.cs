@@ -28,6 +28,7 @@ namespace FriendsAchievementFeed
         private readonly FriendsAchievementFeedSettings _settings;
         private readonly FeedManager _feedService;
         private readonly NotificationPublisher _notifications;
+        private readonly SteamClient _steamClient;
 
         private readonly BackgroundUpdater _backgroundUpdates;
         public FeedControlLogic SharedFeedControlLogic { get; private set; }
@@ -52,7 +53,8 @@ namespace FriendsAchievementFeed
                 HasSettings = true
             };
 
-            _feedService = new FeedManager(api, _settings, _logger, this);
+            _steamClient = new SteamClient(PlayniteApi, _logger, GetPluginUserDataPath());
+            _feedService = new FeedManager(api, _settings, _logger, this, _steamClient);
             _notifications = new NotificationPublisher(api, _settings, _logger);
             _backgroundUpdates = new BackgroundUpdater(_feedService, _settings, _logger, _notifications, UpdateGameFeedGroupsForCurrentGame);
 
@@ -94,7 +96,7 @@ namespace FriendsAchievementFeed
 
         public override UserControl GetSettingsView(bool firstRunView)
         {
-            return new SettingsControl(this, _logger);
+            return new SettingsControl(this, _logger, _steamClient);
         }
 
         // === Menus ===
@@ -179,7 +181,7 @@ namespace FriendsAchievementFeed
 
             var font = Playnite.SDK.ResourceProvider.GetResource("FontIcoFont") as FontFamily;
             tb.FontFamily = font ?? new FontFamily("Segoe UI Symbol");
-            tb.SetResourceReference(TextBlock.ForegroundProperty, "TextBrush");
+            tb.SetResourceReference(TextBlock.ForegroundProperty, "GlyphBrush");
 
             return tb;
         }
@@ -288,24 +290,25 @@ namespace FriendsAchievementFeed
 
                 try
                 {
-                    using (var steam = new SteamClient(PlayniteApi, _logger, GetPluginUserDataPath()))
+                    var id = await _steamClient.GetRequiredSelfSteamId64Async(token).ConfigureAwait(false);
+
+                    if (!string.IsNullOrWhiteSpace(id) && ulong.TryParse(id, out _))
                     {
-                        var id = await steam.GetSelfSteamId64Async(token).ConfigureAwait(false);
+                        _settings.SteamUserId = id;
 
-                        if (!string.IsNullOrWhiteSpace(id) && ulong.TryParse(id, out _))
+                        // Save on UI thread (safer with Playnite settings)
+                        await PlayniteApi.MainView.UIDispatcher.InvokeAsync(() =>
                         {
-                            _settings.SteamUserId = id;
+                            SavePluginSettings(_settings);
+                        });
 
-                            // Save on UI thread (safer with Playnite settings)
-                            await PlayniteApi.MainView.UIDispatcher.InvokeAsync(() =>
-                            {
-                                SavePluginSettings(_settings);
-                            });
-
-                            _logger.Info($"[FAF] Detected SteamID64 from Playnite Steam session and saved to settings: {id}");
-                            return;
-                        }
+                        _logger.Info($"[FAF] Detected SteamID64 from Playnite Steam session and saved to settings: {id}");
+                        return;
                     }
+                }
+                catch (InvalidOperationException)
+                {
+                    _logger.Debug($"[FAF] SteamID64 auto-detect attempt {attempt + 1} failed: Not logged in.");
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {

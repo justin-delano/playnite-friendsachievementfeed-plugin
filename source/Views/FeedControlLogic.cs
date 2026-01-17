@@ -186,14 +186,14 @@ namespace FriendsAchievementFeed.Views
             {
                 ActionButtons.Add(new ButtonViewModel
                 {
-                    Content = "Discover",
-                    ToolTip = "Refresh achievements for this game across all friends, independent of ownership.",
+                    Content = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Discover"),
+                    ToolTip = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Discover_Tooltip"),
                     Command = _controller.RefreshCurrentGameCommand
                 });
                 ActionButtons.Add(new ButtonViewModel
                 {
                     Content = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Refresh"),
-                    ToolTip = "Refresh achievements for this game across friends who own it.",
+                    ToolTip = StringResources.GetString("LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip_Owned"),
                     Command = _controller.RefreshCurrentGameWithOwnersCommand
                 });
             }

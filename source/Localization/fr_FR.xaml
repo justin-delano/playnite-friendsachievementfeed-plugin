@@ -3,7 +3,7 @@
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
 
     <!-- Plugin -->
-    <sys:String x:Key="LOCFriendsAchFeed_Title_PluginName">Friends Achievement Feed</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Title_PluginName">Flux de succès des amis</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_Description">Paramètres du flux de succès de vos amis Steam</sys:String>
 
     <!-- Tabs -->
@@ -15,6 +15,7 @@
     <!-- Steam auth -->
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamConnection">Connexion Steam</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKey">Clé Steam Web API</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Settings_SteamApiKeyHint">Obtenez votre clé API de</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckSteamAuth">Vérifier l'authentification Steam</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_ReauthSteam">S'authentifier (ouvrir le navigateur)</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Settings_CheckingSteamAuth">Vérification de l'authentification Steam...</sys:String>
@@ -60,8 +61,11 @@
     <!-- Feed controls -->
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh">Actualiser 🔄</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip">Actualiser le flux</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Refresh_Tooltip_Owned">Actualisez les succès de ce jeu pour les amis qui le possèdent.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel">Annuler</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Cancel_Tooltip">Annuler la mise à jour en cours</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Discover">Découvrir</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Discover_Tooltip">Actualisez les succès de ce jeu pour tous vos amis, qu'ils le possèdent ou non.</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick">Rapide</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Quick_Tooltip">Met à jour le flux avec les nouveaux succès uniquement</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Feed_Button_Full">Complet 🔄</sys:String>
@@ -82,6 +86,7 @@
     <sys:String x:Key="LOCFriendsAchFeed_Status_UpdatingCache">Mise à jour du flux...</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_Entries">{0} éléments</sys:String>
     <sys:String x:Key="LOCFriendsAchFeed_Status_Never">Jamais</sys:String>
+    <sys:String x:Key="LOCFriendsAchFeed_Status_Idle">Inactif</sys:String>
 
     <!-- Errors / validation -->
     <sys:String x:Key="LOCFriendsAchFeed_Error_FailedLoadFeed">Impossible de charger le flux. Consultez le journal pour plus de détails.</sys:String>

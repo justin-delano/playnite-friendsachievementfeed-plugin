@@ -71,7 +71,7 @@ namespace FriendsAchievementFeed.Services
         }
 
 
-        public async Task<string> GetSelfSteamId64Async(CancellationToken ct)
+        public async Task<string> GetRequiredSelfSteamId64Async(CancellationToken ct)
         {
             // 1. Return memory cached ID if validated recently
             if (!string.IsNullOrWhiteSpace(_selfSteamId64) &&
@@ -93,6 +93,10 @@ namespace FriendsAchievementFeed.Services
                 SaveSessionData();
             }
 
+            if (string.IsNullOrWhiteSpace(_selfSteamId64))
+            {
+                throw new InvalidOperationException("Could not determine SteamID64. Please ensure you are logged into Steam.");
+            }
             return _selfSteamId64;
         }
 

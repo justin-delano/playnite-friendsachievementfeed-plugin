@@ -36,9 +36,7 @@ namespace FriendsAchievementFeed.Views.Helpers
         {
             try
             {
-                var self = await _steam.GetSelfSteamId64Async(token).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(self))
-                    return SteamStatusProvider.NotAuthenticated();
+                var self = await _steam.GetRequiredSelfSteamId64Async(token).ConfigureAwait(false);
 
                 var probe = await _steam.ProbeLoggedInAsync(token).ConfigureAwait(false);
 
@@ -53,6 +51,10 @@ namespace FriendsAchievementFeed.Views.Helpers
                     return SteamStatusProvider.AuthMessage("Saved cookies appear logged out. Click Authenticate.");
 
                 return SteamStatusProvider.AuthMessage($"Auth OK (SteamID {self}).");
+            }
+            catch (InvalidOperationException)
+            {
+                return SteamStatusProvider.NotAuthenticated();
             }
             catch (Exception ex)
             {

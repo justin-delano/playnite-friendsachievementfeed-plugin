@@ -77,7 +77,7 @@ namespace FriendsAchievementFeed.Services
         }
     }
 
-    internal sealed class SteamClient : IDisposable
+    public sealed class SteamClient : IDisposable
     {
         private static readonly Uri CommunityBase = new Uri("https://steamcommunity.com/");
         private static readonly Uri StoreBase = new Uri("https://store.steampowered.com/");
@@ -144,8 +144,8 @@ namespace FriendsAchievementFeed.Services
             BuildHttpClientsOnce();
         }
 
-        public Task<string> GetSelfSteamId64Async(CancellationToken ct) => 
-            _sessionManager.GetSelfSteamId64Async(ct);
+        public Task<string> GetRequiredSelfSteamId64Async(CancellationToken ct) =>
+            _sessionManager.GetRequiredSelfSteamId64Async(ct);
 
         private async Task<bool> EnsureSessionAsync(CancellationToken ct, bool forceRefresh = false)
         {
@@ -287,30 +287,142 @@ namespace FriendsAchievementFeed.Services
         // Friends (API)
         // ---------------------------------------------------------------------
 
+        private const ulong SteamId64Base = 76561197960265728UL; // SteamID64 = base + AccountID (miniprofile)
+
+        private static IEnumerable<ulong> ExtractSteamIdsFromHtml(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) yield break;
+
+            // 1) Direct SteamID64 links
+            foreach (Match m in Regex.Matches(html, @"/profiles/(\d{17})", RegexOptions.IgnoreCase))
+            {
+                if (m.Groups.Count > 1 && ulong.TryParse(m.Groups[1].Value, out var id))
+                    yield return id;
+            }
+
+            // 2) data-miniprofile="<accountid>" (32-bit account id)
+            foreach (Match m in Regex.Matches(
+                html,
+                @"data-miniprofile\s*=\s*[""'](\d{1,12})[""']",
+                RegexOptions.IgnoreCase))
+            {
+                if (m.Groups.Count > 1 && ulong.TryParse(m.Groups[1].Value, out var accountId))
+                    yield return SteamId64Base + accountId;
+            }
+
+            // 3) Embedded JSON patterns (sometimes present)
+            foreach (Match m in Regex.Matches(html, @"""steamid""\s*:\s*""(\d{17})""", RegexOptions.IgnoreCase))
+            {
+                if (m.Groups.Count > 1 && ulong.TryParse(m.Groups[1].Value, out var id))
+                    yield return id;
+            }
+        }
+
+        private static List<ulong> RemoveSelfAndDistinct(IEnumerable<ulong> ids, string selfSteamId64)
+        {
+            var set = new HashSet<ulong>();
+            ulong self = 0;
+            ulong.TryParse(selfSteamId64, out self);
+
+            if (ids != null)
+            {
+                foreach (var id in ids)
+                {
+                    if (id == 0) continue;
+                    if (self != 0 && id == self) continue;
+                    set.Add(id);
+                }
+            }
+
+            return set.ToList();
+        }
+
+        private async Task<List<ulong>> GetMyFriendIdsByScrapingAsync(string selfSteamId64, CancellationToken ct)
+        {
+            // Ensure we have fresh cookies
+            var ok = await EnsureSessionAsync(ct).ConfigureAwait(false);
+            if (!ok) return new List<ulong>();
+
+            // Single fetch only (no paging)
+            var url = $"https://steamcommunity.com/profiles/{selfSteamId64}/friends/?l=english";
+            var res = await GetSteamPageAsync(url, requiresCookies: true, ct).ConfigureAwait(false);
+
+            if (res == null || string.IsNullOrWhiteSpace(res.Html)) return new List<ulong>();
+
+            // If bounced to login/openid, not authenticated
+            if (!string.IsNullOrEmpty(res.FinalUrl) &&
+                (res.FinalUrl.IndexOf("/login", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                res.FinalUrl.IndexOf("openid", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                return new List<ulong>();
+            }
+
+            if (LooksLoggedOutHeader(res.Html))
+                return new List<ulong>();
+
+            return RemoveSelfAndDistinct(ExtractSteamIdsFromHtml(res.Html), selfSteamId64);
+        }
+
         public async Task<List<ulong>> GetFriendIdsAsync(string steamId64, string apiKey, CancellationToken ct)
         {
             if (!InputValidator.HasSteamCredentials(steamId64, apiKey)) return new List<ulong>();
 
+            var url =
+                $"https://api.steampowered.com/ISteamUser/GetFriendList/v1/" +
+                $"?key={Uri.EscapeDataString(apiKey)}" +
+                $"&steamid={Uri.EscapeDataString(steamId64)}" +
+                $"&relationship=friend";
+
             try
             {
-                var url = $"https://api.steampowered.com/ISteamUser/GetFriendList/v1/?key={apiKey}&steamid={steamId64}&relationship=friend";
-                var json = await _apiHttp.GetStringAsync(url).ConfigureAwait(false);
-                
-                var root = Serialization.FromJson<FriendListResponseRoot>(json);
-                return root?.FriendsList?.Friends?
-                    .Where(f => string.Equals(f?.Relationship, "friend", StringComparison.OrdinalIgnoreCase))
-                    .Select(f => f.SteamId)
-                    .Where(s => ulong.TryParse(s, out _))
-                    .Select(ulong.Parse)
-                    .Distinct()
-                    .ToList() ?? new List<ulong>();
+                using (var resp = await _apiHttp.GetAsync(url, ct).ConfigureAwait(false))
+                {
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        var root = Serialization.FromJson<FriendListResponseRoot>(json);
+
+                        var ids = root?.FriendsList?.Friends?
+                            .Where(f => string.Equals(f?.Relationship, "friend", StringComparison.OrdinalIgnoreCase))
+                            .Select(f => f.SteamId)
+                            .Where(s => ulong.TryParse(s, out _))
+                            .Select(ulong.Parse)
+                            .ToList() ?? new List<ulong>();
+
+                        // Filter out self + distinct
+                        return RemoveSelfAndDistinct(ids, steamId64);
+                    }
+
+                    if (resp.StatusCode != HttpStatusCode.Unauthorized && resp.StatusCode != HttpStatusCode.Forbidden)
+                    {
+                        _logger?.Debug($"[FAF] GetFriendList API non-success: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                        return new List<ulong>();
+                    }
+                }
             }
             catch (Exception ex)
             {
-                _logger?.Debug(ex, "[FAF] GetFriendSteamIdsAsync API request failed.");
+                _logger?.Debug(ex, "[FAF] GetFriendSteamIdsAsync API request failed. " + url);
+            }
+
+            _logger?.Debug("[FAF] GetFriendSteamIdsAsync falling back to scrape.");
+
+            // Self-only fallback scrape
+            try
+            {
+                var selfId64 = await _sessionManager.GetRequiredSelfSteamId64Async(ct).ConfigureAwait(false);
+                if (!string.Equals(selfId64, steamId64, StringComparison.OrdinalIgnoreCase))
+                    return new List<ulong>();
+
+                return await GetMyFriendIdsByScrapingAsync(selfId64, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger?.Debug(ex, "[FAF] Friend scrape fallback failed.");
                 return new List<ulong>();
             }
         }
+
 
         // ---------------------------------------------------------------------
         // Parsing / Schema

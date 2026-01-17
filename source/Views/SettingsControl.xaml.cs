@@ -11,6 +11,8 @@ using FriendsAchievementFeed.Models;
 using FriendsAchievementFeed.Views.Helpers;
 using Common;
 using Playnite.SDK;
+using System.Diagnostics;
+using System.Windows.Navigation;
 using StringResources = FriendsAchievementFeed.Services.StringResources;
 
 namespace FriendsAchievementFeed.Views
@@ -79,17 +81,17 @@ namespace FriendsAchievementFeed.Views
         private List<SteamFriend> _friends = new List<SteamFriend>();
         private readonly ILogger _logger;
 
-        public SettingsControl(FriendsAchievementFeedPlugin plugin, ILogger logger)
+        public SettingsControl(FriendsAchievementFeedPlugin plugin, ILogger logger, SteamClient steamClient)
         {
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
             _logger = logger;
+            _steam = steamClient;
 
             InitializeComponent();
 
             // IMPORTANT: keep settings as DataContext so ALL your existing bindings still work
             DataContext = _plugin.Settings;
 
-            _steam = new SteamClient(_plugin.PlayniteApi, _logger, _plugin.GetPluginUserDataPath());
             _steamAuthHelper = new SteamAuthenticator(_steam, _logger);
 
             Loaded += async (s, e) =>
@@ -188,12 +190,7 @@ namespace FriendsAchievementFeed.Views
             {
                 FriendsStatusText = Loc("LOCFriendsAchFeed_Progress_LoadingFriends", "Loading friends…");
 
-                var self = await _steam.GetSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
-                if (string.IsNullOrWhiteSpace(self))
-                {
-                    FriendsStatusText = Loc("LOCFriendsAchFeed_Info_AuthenticateWithSteam", "Authenticate with Steam (General tab) to load friends.");
-                    return;
-                }
+                var self = await _steam.GetRequiredSelfSteamId64Async(CancellationToken.None).ConfigureAwait(true);
 
                 if (string.IsNullOrWhiteSpace(_plugin.Settings.SteamUserId))
                 {
@@ -212,8 +209,13 @@ namespace FriendsAchievementFeed.Views
                         : Loc("LOCFriendsAchFeed_Info_NoFriends", "No friends found or profile private.");
                 });
             }
+            catch (InvalidOperationException)
+            {
+                FriendsStatusText = Loc("LOCFriendsAchFeed_Info_AuthenticateWithSteam", "Authenticate with Steam (General tab) to load friends.");
+            }
             catch (Exception ex)
             {
+                _logger.Error(ex, "Failed to load Steam friends list.");
                 Dispatcher.Invoke(() => FriendsStatusText = string.Format(Loc("LOCFriendsAchFeed_Error_FailedLoadFriends", "Failed to load friends: {0}"), ex.Message));
             }
         }
@@ -340,6 +342,12 @@ namespace FriendsAchievementFeed.Views
             {
                 _logger?.Error(ex, "[FAF] Error disposing SteamClient in SettingsControl.");
             }
+        }
+        
+        private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+        {
+            Process.Start(e.Uri.AbsoluteUri);
+            e.Handled = true;
         }
     }
 }

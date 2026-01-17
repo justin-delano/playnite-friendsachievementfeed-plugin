@@ -58,7 +58,8 @@ namespace FriendsAchievementFeed.Services
             IPlayniteAPI api,
             FriendsAchievementFeedSettings settings,
             ILogger logger,
-            FriendsAchievementFeedPlugin plugin)
+            FriendsAchievementFeedPlugin plugin,
+            SteamClient steamClient)
         {
             _api = api;
             _settings = settings;
@@ -68,7 +69,7 @@ namespace FriendsAchievementFeed.Services
             _cacheService = new CacheManager(api, logger, _plugin);
 
             // FIX: Pass all 4 arguments required by the reverted SteamDataProvider constructor
-            _steam = new SteamDataProvider(_api, _logger, _plugin, _cacheService);
+            _steam = new SteamDataProvider(_logger, _plugin, steamClient, _cacheService);
             
             _entryFactory = new FeedEntryFactory();
             _hydrator = new FeedEntryHydrator(_cacheService, _entryFactory);
