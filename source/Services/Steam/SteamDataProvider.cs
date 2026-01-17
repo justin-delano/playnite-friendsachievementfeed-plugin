@@ -101,18 +101,6 @@ namespace FriendsAchievementFeed.Services
         private static string Loc(string key, string fallback = null) =>
             StringResources.GetString(key) ?? fallback;
 
-        private static (bool IsRateLimited, bool IsEmpty, bool IsLoggedOut) CheckProfilePage(SteamClient.SteamPageResult page)
-        {
-            var statusCode = (int)(page?.StatusCode ?? 0);
-            var html = page?.Html ?? string.Empty;
-            
-            return (
-                IsRateLimited: statusCode == 429,
-                IsEmpty: string.IsNullOrWhiteSpace(html),
-                IsLoggedOut: SteamClient.LooksLoggedOutHeader(html)
-            );
-        }
-
         public async Task<(bool Success, string Message)> TestSteamAuthAsync(string steamUserId)
         {
             try
